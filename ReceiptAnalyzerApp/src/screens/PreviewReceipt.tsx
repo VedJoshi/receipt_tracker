@@ -1,24 +1,40 @@
 import React, { useState } from 'react';
 import { View, Image, TouchableOpacity, Text, StyleSheet, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { receiptService } from '../services/receipts';
 
 export default function PreviewReceipt({ route, navigation }) {
-  const { path, width, height } = route.params;
+  const { uri, width, height } = route.params;
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
 
   const handleUpload = async () => {
     setIsUploading(true);
+    setUploadProgress(0);
+    
     try {
-      // Here we'll add the AWS S3 upload logic later
-      // For now, just simulate an upload
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
+      // use placeholder metadata
+      // Later, add a form to collect this information
+      const metadata = {
+        store_name: 'Unknown Store',
+        total_amount: 0,
+        purchase_date: new Date().toISOString(),
+      };
+
+      const { receipt, error } = await receiptService.uploadReceipt(
+        uri,
+        metadata,
+        (progress) => setUploadProgress(progress)
+      );
+
+      if (error) throw error;
+
       Alert.alert(
         'Success',
         'Receipt uploaded successfully!',
         [
           {
-            text: 'OK',
+            text: 'View Receipts',
             onPress: () => navigation.navigate('ViewReceipts')
           }
         ]

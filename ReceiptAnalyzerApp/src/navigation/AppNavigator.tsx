@@ -5,7 +5,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import HomeScreen from '../screens/HomeScreen';
 import ScanReceipt from '../screens/ScanReceipt';
 import PreviewReceipt from '../screens/PreviewReceipt';
-//import ViewReceipts from '../screens/ViewReceipts';
+import ViewReceipts from '../screens/ViewReceipts';
 //import Analysis from '../screens/Analysis';
 
 const Stack = createNativeStackNavigator();
@@ -40,6 +40,16 @@ export function AppNavigator() {
         name="PreviewReceipt" 
         component={PreviewReceipt}
         options={{ title: 'Preview Receipt' }}
+      />
+      <Stack.Screen
+        name="ViewReceipts"
+        component={ViewReceipts}
+        options={{ title: 'View Receipt' }}
+      />
+      <Stack.Screen 
+        name="TestUpload" 
+        component={TestUpload}
+        options={{ title: 'Test S3 Upload' }}
       />
       </Stack.Navigator>
   );
