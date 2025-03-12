@@ -1,56 +1,37 @@
 import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import HomeScreen from '../screens/HomeScreen';
 import ScanReceipt from '../screens/ScanReceipt';
 import PreviewReceipt from '../screens/PreviewReceipt';
-import ViewReceipts from '../screens/ViewReceipts';
-//import Analysis from '../screens/Analysis';
+import TestUpload from '../screens/TestUpload';
 
 const Stack = createNativeStackNavigator();
 
 export function AppNavigator() {
   return (
-    <Stack.Navigator
-      screenOptions={{
-        headerStyle: {
-          backgroundColor: '#f9fafb',
-        },
-        headerShadowVisible: false,
-      }}
-    >
+    <Stack.Navigator>
       <Stack.Screen 
         name="Home" 
-        component={HomeScreen}
+        component={HomeScreen} 
         options={{ headerShown: false }}
+      />
+      <Stack.Screen 
+        name="TestUpload" 
+        component={TestUpload}
+        options={{ title: 'Test Upload' }}
       />
       <Stack.Screen 
         name="ScanReceipt" 
         component={ScanReceipt}
-        options={{ 
-          title: 'Scan Receipt',
-          headerStyle: {
-            backgroundColor: 'black',
-          },
-          headerTintColor: 'white',
-        }}
+        options={{ title: 'Scan Receipt' }}
       />
       <Stack.Screen 
         name="PreviewReceipt" 
         component={PreviewReceipt}
         options={{ title: 'Preview Receipt' }}
       />
-      <Stack.Screen
-        name="ViewReceipts"
-        component={ViewReceipts}
-        options={{ title: 'View Receipt' }}
-      />
-      <Stack.Screen 
-        name="TestUpload" 
-        component={TestUpload}
-        options={{ title: 'Test S3 Upload' }}
-      />
-      </Stack.Navigator>
+    </Stack.Navigator>
   );
 }

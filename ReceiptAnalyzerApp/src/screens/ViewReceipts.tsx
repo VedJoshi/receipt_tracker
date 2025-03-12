@@ -74,7 +74,7 @@ export default function ViewReceipts({ navigation }) {
         <Image
           source={{ uri: item.imageUrl }}
           style={styles.thumbnail}
-          defaultSource={require('../assets/receipt-placeholder.png')}
+          defaultSource={require('../../assets/receipt-placeholder.png')}
         />
       </View>
     </TouchableOpacity>

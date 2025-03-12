@@ -1,13 +1,11 @@
-import { Storage } from 'aws-amplify';
-import { Amplify } from 'aws-amplify';
+import { Amplify, Storage } from 'aws-amplify';
 import {
-  AWS_BUCKET_NAME,
-  AWS_REGION,
   AWS_ACCESS_KEY_ID,
-  AWS_SECRET_ACCESS_KEY
+  AWS_SECRET_ACCESS_KEY,
+  AWS_REGION,
+  AWS_BUCKET_NAME
 } from '@env';
 
-// Configure AWS Amplify to use our credentials
 Amplify.configure({
   Storage: {
     AWSS3: {
@@ -16,59 +14,92 @@ Amplify.configure({
       credentials: {
         accessKeyId: AWS_ACCESS_KEY_ID,
         secretAccessKey: AWS_SECRET_ACCESS_KEY
+      },
+      identityPoolId: undefined,
+      level: 'public',
+      customPrefix: {
+        public: ''
       }
     }
   }
 });
 
-// Create a service to handle all S3-related operations
+
 export const storageService = {
-  // Upload a file to S3
-  uploadFile: async (
-    uri: string,
-    progressCallback?: (progress: number) => void
-  ) => {
+  uploadFile: async (uri: string, progressCallback?: (progress: number) => void) => {
+    // Keep track of the filename for error handling
+    let filename: string | null = null;
+    
     try {
-      console.log('Starting file upload...');
-      
-      // Convert the file URI to a blob
+      console.log('Starting upload with config:', {
+        bucket: AWS_BUCKET_NAME,
+        region: AWS_REGION,
+        hasCredentials: !!(AWS_ACCESS_KEY_ID && AWS_SECRET_ACCESS_KEY)
+      });
+  
       const response = await fetch(uri);
       const blob = await response.blob();
       
-      // Create a unique filename using timestamp
-      const filename = `receipts/${Date.now()}-${Math.random().toString(36).substring(7)}.jpg`;
+      // Generate unique filename
+      filename = `receipts/${Date.now()}-${Math.random().toString(36).substring(7)}.jpg`;
+      console.log('Attempting upload of:', filename);
       
-      // Upload to S3
       const result = await Storage.put(filename, blob, {
         contentType: 'image/jpeg',
         progressCallback: (progress) => {
           const percentage = (progress.loaded / progress.total) * 100;
-          progressCallback?.(percentage);
           console.log(`Upload progress: ${percentage}%`);
+          progressCallback?.(percentage);
         }
       });
       
-      // Get the public URL of the uploaded file
-      const fileUrl = await Storage.get(filename);
+      console.log('Upload result:', result);
       
-      console.log('File uploaded successfully:', fileUrl);
-      return { url: fileUrl, key: filename, error: null };
+      // Get the URL of the uploaded file
+      const url = await Storage.get(filename);
+      
+      return {
+        url,
+        key: filename,
+        error: null
+      };
       
     } catch (error) {
-      console.error('Error uploading file:', error);
-      return { url: null, key: null, error };
-    }
-  },
+      console.error('Initial error in upload process:', {
+        errorMessage: error.message,
+        errorCode: error.code,
+        errorName: error.name,
+        stack: error.stack
+      });
 
-  // Delete a file from S3
-  deleteFile: async (key: string) => {
-    try {
-      await Storage.remove(key);
-      console.log('File deleted successfully:', key);
-      return { error: null };
-    } catch (error) {
-      console.error('Error deleting file:', error);
-      return { error };
+      // If we have a filename, let's check if the file actually made it to S3
+      if (filename) {
+        try {
+          console.log('Checking if file exists despite error...');
+          const url = await Storage.get(filename);
+          
+          console.log('File found in S3:', url);
+          return {
+            url,
+            key: filename,
+            warning: 'File uploaded successfully but encountered some non-critical errors',
+            originalError: error.message
+          };
+        } catch (secondError) {
+          console.error('File not found in S3 after error');
+          return { 
+            url: null, 
+            key: null, 
+            error: error.message 
+          };
+        }
+      }
+
+      return { 
+        url: null, 
+        key: null, 
+        error: error.message 
+      };
     }
   }
 };

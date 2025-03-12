@@ -6,7 +6,8 @@
     "moduleResolution": "node",
     "baseUrl": ".",
     "paths": {
-      "*": ["*", "*.ios", "*.android"]
+      "*": ["*", "*.ios", "*.android"],
+      "@env": [".env"]
     },
     "allowJs": true,
     "allowSyntheticDefaultImports": true,
@@ -16,11 +17,13 @@
     "noEmit": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
-    "target": "ESNext"
+    "target": "ESNext",
+    "types": ["react-native", "node"]
   },
   "include": [
     "**/*.ts",
-    "**/*.tsx"
+    "**/*.tsx",
+    "src/env.d.ts"
   ],
   "exclude": [
     "node_modules",

@@ -37,6 +37,12 @@ export default function HomeScreen({ navigation }) {
               Spending Analysis
             </Text>
           </TouchableOpacity>
+          <TouchableOpacity 
+            style={styles.pinkButton}
+            onPress={() => navigation.navigate('TestUpload')}
+          >
+            <Text style={styles.buttonText}>Test Upload</Text>
+          </TouchableOpacity>
         </View>
       </View>
     </SafeAreaView>
@@ -79,6 +85,12 @@ const styles = StyleSheet.create({
   },
   greenButton: {
     backgroundColor: '#22c55e',
+    padding: 16,
+    borderRadius: 8,
+    width: 256,
+  },
+  pinkButton: {
+    backgroundColor: '#ec4899',
     padding: 16,
     borderRadius: 8,
     width: 256,
