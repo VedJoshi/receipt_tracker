@@ -1,200 +1,317 @@
 import cv2
 import numpy as np
+import pytesseract
+from PIL import Image
+import io
 import re
-import os
 import json
-from datetime import datetime
+import os
+import boto3
+from botocore.exceptions import ClientError
+import logging
+from flask import Flask, request, jsonify
+import requests
+from dotenv import load_dotenv
 
-def preprocess_image(image_path):
-    """
-    Preprocess the receipt image to enhance features
-    """
-    # Read the image
-    img = cv2.imread(image_path)
+# Load environment variables
+load_dotenv()
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# Initialize Flask app
+app = Flask(__name__)
+
+# Initialize AWS S3 client
+s3_client = boto3.client(
+    's3',
+    region_name=os.environ.get('AWS_REGION', 'ap-southeast-1'),
+    aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID'),
+    aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY')
+)
+
+# Initialize Supabase client (if needed for direct DB updates)
+# We'll use HTTP requests for simplicity instead of the supabase-py library
+
+# Configure pytesseract path if running in Docker
+if os.path.exists('/usr/bin/tesseract'):
+    pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
+
+def download_image_from_s3(bucket, key):
+    """Download an image from S3 bucket"""
+    try:
+        logger.info(f"Downloading image from S3: {bucket}/{key}")
+        response = s3_client.get_object(Bucket=bucket, Key=key)
+        image_content = response['Body'].read()
+        return image_content
+    except ClientError as e:
+        logger.error(f"Error downloading image from S3: {e}")
+        raise
+
+def preprocess_image(image_bytes):
+    """Preprocess the image to improve OCR results"""
+    # Convert bytes to numpy array
+    nparr = np.frombuffer(image_bytes, np.uint8)
+    # Decode image
+    image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     
-    # Check if image was properly loaded
-    if img is None:
-        raise Exception(f"Failed to load image from {image_path}")
+    # Check if image was loaded correctly
+    if image is None:
+        raise ValueError("Failed to decode image")
     
     # Convert to grayscale
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     
     # Apply Gaussian blur to reduce noise
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
     
-    # Apply adaptive thresholding
+    # Apply adaptive thresholding to enhance text
     thresh = cv2.adaptiveThreshold(
-        blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-        cv2.THRESH_BINARY, 11, 2
+        blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
     )
     
-    # Dilate the text to make it more visible
+    # Use morphological operations to further clean the image
     kernel = np.ones((1, 1), np.uint8)
-    dilated = cv2.dilate(thresh, kernel, iterations=1)
+    opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
     
-    # Apply erosion to remove noise
-    eroded = cv2.erode(dilated, kernel, iterations=1)
-    
-    return eroded, img
+    return opening
 
-def detect_text_regions(preprocessed_img, original_img):
-    """
-    Use contour detection to find potential text regions
-    Instead of OCR, we'll analyze visual structures to identify regions
-    """
-    # Find contours in the image
-    contours, _ = cv2.findContours(
-        preprocessed_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-    )
+def extract_text(preprocessed_image):
+    """Extract text from the preprocessed image using Tesseract OCR"""
+    # Convert numpy array to PIL Image
+    pil_image = Image.fromarray(preprocessed_image)
     
-    # Filter contours by size and shape to find potential text lines
-    min_contour_width = 40
-    min_contour_height = 8
-    max_contour_height = 40
+    # Apply OCR using pytesseract
+    text = pytesseract.image_to_string(pil_image)
     
-    text_line_regions = []
+    logger.info("Text extraction completed")
+    return text
+
+def extract_store_name(text):
+    """Extract store name from OCR text"""
+    # Split text into lines
+    lines = text.split('\n')
     
-    for contour in contours:
-        x, y, w, h = cv2.boundingRect(contour)
+    # Typically, store name appears in the first few lines
+    # This is a simplified approach and might need refinement
+    store_candidates = [line.strip() for line in lines[:5] if line.strip()]
+    
+    # Return the first non-empty candidate that is not a date, time, or address pattern
+    for candidate in store_candidates:
+        # Skip if it looks like a date
+        if re.search(r'\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4}', candidate):
+            continue
         
-        # Filter by size to identify text-like regions
-        if (w > min_contour_width and 
-            min_contour_height < h < max_contour_height and
-            w > h * 2):  # Text lines are typically wider than tall
-            text_line_regions.append((x, y, w, h))
+        # Skip if it looks like a time
+        if re.search(r'\d{1,2}:\d{2}', candidate):
+            continue
+        
+        # Skip if it looks like a phone number
+        if re.search(r'\d{3}[.\-\s]?\d{3}[.\-\s]?\d{4}', candidate):
+            continue
+        
+        # Skip if it has too many digits
+        if sum(c.isdigit() for c in candidate) > len(candidate) / 3:
+            continue
+        
+        return candidate
     
-    # Sort regions by y-coordinate (top to bottom)
-    text_line_regions.sort(key=lambda r: r[1])
-    
-    # Create a visualization of detected regions (for debugging)
-    visualization = original_img.copy()
-    for x, y, w, h in text_line_regions:
-        cv2.rectangle(visualization, (x, y), (x + w, y + h), (0, 255, 0), 2)
-    
-    # Save the visualization for debugging
-    cv2.imwrite("detected_regions.jpg", visualization)
-    
-    return text_line_regions
+    return "Unknown Store"
 
-def analyze_receipt_structure(text_regions, img_height, img_width):
-    """
-    Analyze the receipt structure based on text regions positioning
-    """
-    # Identify header region (typically first ~20% of receipt)
-    header_cutoff = img_height * 0.2
-    header_regions = [r for r in text_regions if r[1] < header_cutoff]
+def extract_total_amount(text):
+    """Extract total amount from OCR text"""
+    # Patterns to look for total amount
+    total_patterns = [
+        r'TOTAL\s*[\$]?\s*(\d+[\.,]\d{2})',
+        r'Total\s*[\$]?\s*(\d+[\.,]\d{2})',
+        r'AMOUNT\s*[\$]?\s*(\d+[\.,]\d{2})',
+        r'Amount\s*[\$]?\s*(\d+[\.,]\d{2})',
+        r'SUBTOTAL\s*[\$]?\s*(\d+[\.,]\d{2})',
+        r'GRAND TOTAL\s*[\$]?\s*(\d+[\.,]\d{2})',
+    ]
     
-    # Identify total region (typically in bottom 30% of receipt)
-    total_cutoff = img_height * 0.7
-    total_regions = [r for r in text_regions if r[1] > total_cutoff]
+    for pattern in total_patterns:
+        matches = re.search(pattern, text)
+        if matches:
+            return float(matches.group(1).replace(',', '.'))
     
-    # Identify middle regions (items)
-    item_regions = [r for r in text_regions if header_cutoff <= r[1] <= total_cutoff]
+    # If we can't find a specific total, look for dollar amounts
+    # and take the largest one as a fallback
+    dollar_amounts = re.findall(r'[\$]?\s*(\d+[\.,]\d{2})', text)
+    if dollar_amounts:
+        try:
+            amounts = [float(amount.replace(',', '.')) for amount in dollar_amounts]
+            return max(amounts)
+        except ValueError:
+            pass
     
-    # Analyze density and alignment of regions to refine detection
-    # (this can be expanded based on your specific receipt formats)
-    
-    return {
-        "header": header_regions,
-        "items": item_regions,
-        "total": total_regions
-    }
+    return None
 
-def extract_receipt_data(img, regions):
+def extract_purchase_date(text):
+    """Extract purchase date from OCR text"""
+    # Common date formats
+    date_patterns = [
+        r'(\d{1,2})[/\-\.](\d{1,2})[/\-\.](\d{2,4})',  # MM/DD/YYYY or DD/MM/YYYY
+        r'(\d{4})[/\-\.](\d{1,2})[/\-\.](\d{1,2})',    # YYYY/MM/DD
+        r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* (\d{1,2}),? (\d{4})',  # Month DD, YYYY
+        r'(\d{1,2}) (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* (\d{4})'     # DD Month YYYY
+    ]
+    
+    for pattern in date_patterns:
+        matches = re.search(pattern, text)
+        if matches:
+            if len(matches.groups()) == 3:
+                # For numeric patterns
+                # Assume MM/DD/YYYY format for simplicity
+                # In a production scenario, you'd need to handle different regional formats
+                month, day, year = matches.groups()
+                
+                # Handle 2-digit year
+                if len(year) == 2:
+                    year = '20' + year if int(year) < 50 else '19' + year
+                    
+                return f"{month}/{day}/{year}"
+            else:
+                # For text patterns
+                return matches.group(0)
+    
+    return None
+
+def extract_items(text):
     """
-    Extract structured data from the identified regions
-    Since we're not using OCR, we'll create a placeholder extraction
-    based on the structure detection
+    Extract list of items with prices
+    This is a simplified approach and might need refinement based on receipt format
     """
-    # In a real implementation, you would:
-    # 1. Use a text recognition model (like EAST or a CNN) on each region
-    # 2. Analyze patterns to identify store name, total, date, etc.
+    # This is a challenging task and often requires custom training for specific receipt formats
+    # Here's a simplified approach that might work for some receipt formats
     
-    # For this demo, we'll create placeholder data based on the regions
-    
-    # Extract potential store name (largest region in header)
-    store_name = "Unknown Store"
-    if regions["header"]:
-        biggest_header = max(regions["header"], key=lambda r: r[2] * r[3])
-        store_name = f"Store (Region at {biggest_header[0]},{biggest_header[1]})"
-    
-    # Extract potential total (regions in the bottom that are right-aligned)
-    total_amount = None
-    if regions["total"]:
-        # Look for right-aligned regions
-        right_aligned = [r for r in regions["total"] if r[0] + r[2] > img.shape[1] * 0.7]
-        if right_aligned:
-            # Usually the total is one of the last right-aligned elements
-            total_amount = 99.99  # Placeholder
-    
-    # Extract potential date (often in header, has specific pattern)
-    date = datetime.now().strftime("%m/%d/%Y")  # Placeholder
-    
-    # Extract potential items (regions in the middle section)
+    lines = text.split('\n')
     items = []
-    for i, region in enumerate(regions["items"]):
-        # In reality, you would extract text and price from each item region
-        items.append({
-            "name": f"Item {i+1}",
-            "price": round(9.99 * (i+1), 2)  # Placeholder
-        })
     
-    return {
-        "full_text": "OpenCV detected structures without OCR text extraction",
-        "store_name": store_name,
-        "total_amount": total_amount,
-        "date": date,
-        "items": items
-    }
+    for line in lines:
+        # Look for lines with a price pattern at the end
+        match = re.search(r'(.+?)\s+[\$]?(\d+[\.,]\d{2})$', line.strip())
+        if match:
+            item_name = match.group(1).strip()
+            item_price = float(match.group(2).replace(',', '.'))
+            
+            # Skip if it looks like a total, subtotal, tax, etc.
+            skip_keywords = ['total', 'subtotal', 'tax', 'change', 'cash', 'credit', 'debit', 'balance', 'due']
+            if any(keyword in item_name.lower() for keyword in skip_keywords):
+                continue
+                
+            items.append({
+                "name": item_name,
+                "price": item_price
+            })
+    
+    return items
 
-def process_receipt(image_path):
+def parse_s3_uri(s3_uri):
+    """Parse S3 URI into bucket and key"""
+    if not s3_uri.startswith('s3://'):
+        raise ValueError("Invalid S3 URI format")
+    
+    path = s3_uri[5:]  # Remove 's3://'
+    parts = path.split('/', 1)
+    
+    if len(parts) == 1:
+        bucket = parts[0]
+        key = ''
+    else:
+        bucket, key = parts
+    
+    return bucket, key
+
+def process_receipt(image_uri):
     """
-    Main function to process receipt image and extract structured data
-    using OpenCV-only approach
+    Process a receipt image and extract information
+    
+    Args:
+        image_uri: S3 URI of the image (s3://bucket/key)
+        
+    Returns:
+        dict: Extracted receipt information
     """
     try:
-        # Preprocess the image
-        preprocessed, original = preprocess_image(image_path)
+        # Parse S3 URI
+        bucket, key = parse_s3_uri(image_uri)
         
-        # Detect text regions
-        text_regions = detect_text_regions(preprocessed, original)
+        # Download image from S3
+        image_bytes = download_image_from_s3(bucket, key)
         
-        # Analyze receipt structure
-        img_height, img_width = original.shape[:2]
-        receipt_structure = analyze_receipt_structure(text_regions, img_height, img_width)
+        # Preprocess image
+        preprocessed = preprocess_image(image_bytes)
         
-        # Extract data from structure
-        result = extract_receipt_data(original, receipt_structure)
+        # Extract text using OCR
+        extracted_text = extract_text(preprocessed)
         
-        # Add some metadata
-        result["detected_regions"] = len(text_regions)
-        result["processing_method"] = "OpenCV-only structure analysis"
+        # Extract structured data
+        store_name = extract_store_name(extracted_text)
+        total_amount = extract_total_amount(extracted_text)
+        purchase_date = extract_purchase_date(extracted_text)
+        items = extract_items(extracted_text)
         
+        # Return structured results
+        result = {
+            "extracted_text": extracted_text,
+            "store_name": store_name,
+            "total_amount": total_amount,
+            "purchase_date": purchase_date,
+            "items": items
+        }
+        
+        logger.info(f"Receipt processing completed: {store_name}, {total_amount}, {purchase_date}")
         return result
         
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        
-        # Return error
-        return {
-            "error": str(e),
-            "full_text": "Error processing receipt with OpenCV"
-        }
+        logger.error(f"Error processing receipt: {e}", exc_info=True)
+        raise
 
-# For command-line testing
-if __name__ == "__main__":
-    import sys
-    
-    if len(sys.argv) != 2:
-        print("Usage: python receipt_processor.py <input_image_path>")
-        sys.exit(1)
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Health check endpoint"""
+    return jsonify({"status": "healthy", "service": "receipt-processor"})
+
+@app.route('/process', methods=['POST'])
+def process_receipt_endpoint():
+    """Endpoint to process a receipt image"""
+    try:
+        # Get request data
+        data = request.json
         
-    input_path = sys.argv[1]
-    
-    if not os.path.exists(input_path):
-        print(f"Input image {input_path} not found")
-        sys.exit(1)
+        if not data or 'image_uri' not in data:
+            return jsonify({"error": "Missing image_uri in request"}), 400
+            
+        image_uri = data['image_uri']
+        receipt_id = data.get('receipt_id')
+        callback_url = data.get('callback_url')
         
-    result = process_receipt(input_path)
-    print(json.dumps(result, indent=2))
+        # Process the receipt
+        result = process_receipt(image_uri)
+        
+        # If a callback URL is provided, send results there
+        if callback_url:
+            payload = {
+                "receipt_id": receipt_id,
+                "processing_result": result
+            }
+            
+            try:
+                response = requests.post(callback_url, json=payload)
+                logger.info(f"Callback response: {response.status_code}")
+            except Exception as e:
+                logger.error(f"Error sending callback: {e}")
+                # Continue processing even if callback fails
+        
+        # Return the result
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Error in process endpoint: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
