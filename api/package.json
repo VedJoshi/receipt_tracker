@@ -11,10 +11,12 @@
   "description": "",
   "dependencies": {
     "@aws-sdk/client-s3": "^3.779.0",
+    "@aws-sdk/s3-request-presigner": "^3.779.0",
     "@supabase/supabase-js": "^2.49.4",
+    "busboy": "^1.6.0",
     "dotenv": "^16.4.7",
-    "formidable": "^3.5.2",
-    "jsonwebtoken": "^9.0.2"
+    "jsonwebtoken": "^9.0.2",
+    "uuid": "^9.0.1"
   },
   "devDependencies": {
     "serverless": "^3.40.0",

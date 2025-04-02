@@ -28,6 +28,9 @@
           ]
         }
       },
+      "httpApi": {
+        "cors": true
+      },
       "stage": "dev",
       "versionFunctions": true,
       "compiledCloudFormationTemplate": {
@@ -197,7 +200,7 @@
                 "S3Bucket": {
                   "Ref": "ServerlessDeploymentBucket"
                 },
-                "S3Key": "serverless/receipt-app-backend/dev/1743586298443-2025-04-02T09:31:38.443Z/receipt-app-backend.zip"
+                "S3Key": "serverless/receipt-app-backend/dev/1743598438642-2025-04-02T12:53:58.642Z/receipt-app-backend.zip"
               },
               "Handler": "handler.endpoint",
               "Runtime": "nodejs18.x",
@@ -223,148 +226,60 @@
               "ApiLogGroup"
             ]
           },
-          "ApiLambdaVersionYs3vEydVPgrVM7soBRuC13pSBQ4tRyTXPjVtSO3HUJ8": {
+          "ApiLambdaVersionJvHQRGU3SnxUYnKKD3EuQCXTNwSYcgvizBwLiXvfkU": {
             "Type": "AWS::Lambda::Version",
             "DeletionPolicy": "Retain",
             "Properties": {
               "FunctionName": {
                 "Ref": "ApiLambdaFunction"
               },
-              "CodeSha256": "4k+V2Ok9yNkHHOFEvb06PI/krOBZd7F2NNBpAmkNMOI="
+              "CodeSha256": "uC5iphRFPMLfm+BhmL6becBMG/E5pUc3GVJnRXu3KMA="
             }
           },
-          "ApiGatewayRestApi": {
-            "Type": "AWS::ApiGateway::RestApi",
+          "HttpApi": {
+            "Type": "AWS::ApiGatewayV2::Api",
             "Properties": {
               "Name": "dev-receipt-app-backend",
-              "EndpointConfiguration": {
-                "Types": [
-                  "EDGE"
+              "ProtocolType": "HTTP",
+              "CorsConfiguration": {
+                "AllowHeaders": [
+                  "Content-Type",
+                  "X-Amz-Date",
+                  "Authorization",
+                  "X-Api-Key",
+                  "X-Amz-Security-Token",
+                  "X-Amz-User-Agent",
+                  "X-Amzn-Trace-Id"
+                ],
+                "AllowMethods": [
+                  "OPTIONS",
+                  "GET",
+                  "POST",
+                  "PUT",
+                  "PATCH",
+                  "HEAD",
+                  "DELETE"
+                ],
+                "AllowOrigins": [
+                  "*"
                 ]
-              },
-              "Policy": ""
-            }
-          },
-          "ApiGatewayResourceProxyVar": {
-            "Type": "AWS::ApiGateway::Resource",
-            "Properties": {
-              "ParentId": {
-                "Fn::GetAtt": [
-                  "ApiGatewayRestApi",
-                  "RootResourceId"
-                ]
-              },
-              "PathPart": "{proxy+}",
-              "RestApiId": {
-                "Ref": "ApiGatewayRestApi"
               }
             }
           },
-          "ApiGatewayMethodProxyVarOptions": {
-            "Type": "AWS::ApiGateway::Method",
+          "HttpApiStage": {
+            "Type": "AWS::ApiGatewayV2::Stage",
             "Properties": {
-              "AuthorizationType": "NONE",
-              "HttpMethod": "OPTIONS",
-              "MethodResponses": [
-                {
-                  "StatusCode": "200",
-                  "ResponseParameters": {
-                    "method.response.header.Access-Control-Allow-Origin": true,
-                    "method.response.header.Access-Control-Allow-Headers": true,
-                    "method.response.header.Access-Control-Allow-Methods": true
-                  },
-                  "ResponseModels": {}
-                }
-              ],
-              "RequestParameters": {},
-              "Integration": {
-                "Type": "MOCK",
-                "RequestTemplates": {
-                  "application/json": "{statusCode:200}"
-                },
-                "ContentHandling": "CONVERT_TO_TEXT",
-                "IntegrationResponses": [
-                  {
-                    "StatusCode": "200",
-                    "ResponseParameters": {
-                      "method.response.header.Access-Control-Allow-Origin": "'*'",
-                      "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-Amz-User-Agent'",
-                      "method.response.header.Access-Control-Allow-Methods": "'OPTIONS,DELETE,GET,HEAD,PATCH,POST,PUT'"
-                    },
-                    "ResponseTemplates": {
-                      "application/json": ""
-                    }
-                  }
-                ]
+              "ApiId": {
+                "Ref": "HttpApi"
               },
-              "ResourceId": {
-                "Ref": "ApiGatewayResourceProxyVar"
-              },
-              "RestApiId": {
-                "Ref": "ApiGatewayRestApi"
+              "StageName": "$default",
+              "AutoDeploy": true,
+              "DefaultRouteSettings": {
+                "DetailedMetricsEnabled": false
               }
             }
           },
-          "ApiGatewayMethodProxyVarAny": {
-            "Type": "AWS::ApiGateway::Method",
-            "Properties": {
-              "HttpMethod": "ANY",
-              "RequestParameters": {},
-              "ResourceId": {
-                "Ref": "ApiGatewayResourceProxyVar"
-              },
-              "RestApiId": {
-                "Ref": "ApiGatewayRestApi"
-              },
-              "ApiKeyRequired": false,
-              "AuthorizationType": "NONE",
-              "Integration": {
-                "IntegrationHttpMethod": "POST",
-                "Type": "AWS_PROXY",
-                "Uri": {
-                  "Fn::Join": [
-                    "",
-                    [
-                      "arn:",
-                      {
-                        "Ref": "AWS::Partition"
-                      },
-                      ":apigateway:",
-                      {
-                        "Ref": "AWS::Region"
-                      },
-                      ":lambda:path/2015-03-31/functions/",
-                      {
-                        "Fn::GetAtt": [
-                          "ApiLambdaFunction",
-                          "Arn"
-                        ]
-                      },
-                      "/invocations"
-                    ]
-                  ]
-                }
-              },
-              "MethodResponses": []
-            },
-            "DependsOn": [
-              "ApiLambdaPermissionApiGateway"
-            ]
-          },
-          "ApiGatewayDeployment1743586289936": {
-            "Type": "AWS::ApiGateway::Deployment",
-            "Properties": {
-              "RestApiId": {
-                "Ref": "ApiGatewayRestApi"
-              },
-              "StageName": "dev"
-            },
-            "DependsOn": [
-              "ApiGatewayMethodProxyVarOptions",
-              "ApiGatewayMethodProxyVarAny"
-            ]
-          },
-          "ApiLambdaPermissionApiGateway": {
+          "ApiLambdaPermissionHttpApi": {
             "Type": "AWS::Lambda::Permission",
             "Properties": {
               "FunctionName": {
@@ -393,13 +308,90 @@
                     },
                     ":",
                     {
-                      "Ref": "ApiGatewayRestApi"
+                      "Ref": "HttpApi"
                     },
-                    "/*/*"
+                    "/*"
                   ]
                 ]
               }
             }
+          },
+          "HttpApiIntegrationApi": {
+            "Type": "AWS::ApiGatewayV2::Integration",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "IntegrationType": "AWS_PROXY",
+              "IntegrationUri": {
+                "$ref": "$[\"service\"][\"provider\"][\"compiledCloudFormationTemplate\"][\"Resources\"][\"ApiLambdaPermissionHttpApi\"][\"Properties\"][\"FunctionName\"]"
+              },
+              "PayloadFormatVersion": "2.0",
+              "TimeoutInMillis": 30000
+            }
+          },
+          "HttpApiRouteAnyProxyVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "ANY /{proxy+}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationApi"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationApi"
+          },
+          "HttpApiRouteGetReceipts": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /receipts",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationApi"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationApi"
+          },
+          "HttpApiRoutePostUpload": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "POST /upload",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationApi"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationApi"
           }
         },
         "Outputs": {
@@ -414,21 +406,30 @@
           "ApiLambdaFunctionQualifiedArn": {
             "Description": "Current Lambda function version",
             "Value": {
-              "Ref": "ApiLambdaVersionYs3vEydVPgrVM7soBRuC13pSBQ4tRyTXPjVtSO3HUJ8"
+              "Ref": "ApiLambdaVersionJvHQRGU3SnxUYnKKD3EuQCXTNwSYcgvizBwLiXvfkU"
             },
             "Export": {
               "Name": "sls-receipt-app-backend-dev-ApiLambdaFunctionQualifiedArn"
             }
           },
-          "ServiceEndpoint": {
-            "Description": "URL of the service endpoint",
+          "HttpApiId": {
+            "Description": "Id of the HTTP API",
+            "Value": {
+              "Ref": "HttpApi"
+            },
+            "Export": {
+              "Name": "sls-receipt-app-backend-dev-HttpApiId"
+            }
+          },
+          "HttpApiUrl": {
+            "Description": "URL of the HTTP API",
             "Value": {
               "Fn::Join": [
                 "",
                 [
                   "https://",
                   {
-                    "Ref": "ApiGatewayRestApi"
+                    "Ref": "HttpApi"
                   },
                   ".execute-api.",
                   {
@@ -437,13 +438,12 @@
                   ".",
                   {
                     "Ref": "AWS::URLSuffix"
-                  },
-                  "/dev"
+                  }
                 ]
               ]
             },
             "Export": {
-              "Name": "sls-receipt-app-backend-dev-ServiceEndpoint"
+              "Name": "sls-receipt-app-backend-dev-HttpApiUrl"
             }
           }
         }
@@ -544,6 +544,33 @@
       },
       "serverless-offline": {
         "httpPort": 3001
+      },
+      "httpApi": {
+        "cors": {
+          "allowedOrigins": [
+            "http://localhost:3000",
+            "*"
+          ],
+          "allowedHeaders": [
+            "Content-Type",
+            "X-Amz-Date",
+            "Authorization",
+            "X-Api-Key",
+            "X-Amz-Security-Token",
+            "X-Amz-User-Agent",
+            "Access-Control-Allow-Headers",
+            "Access-Control-Allow-Origin"
+          ],
+          "allowedMethods": [
+            "GET",
+            "POST",
+            "PUT",
+            "DELETE",
+            "OPTIONS"
+          ],
+          "allowCredentials": false,
+          "maxAge": 86400
+        }
       }
     },
     "plugins": [
@@ -556,27 +583,28 @@
         "handler": "handler.endpoint",
         "events": [
           {
-            "http": {
-              "path": "{proxy+}",
-              "method": "any",
-              "cors": {
-                "origin": "*",
-                "methods": [
-                  "OPTIONS",
-                  "ANY"
-                ],
-                "headers": [
-                  "Content-Type",
-                  "X-Amz-Date",
-                  "Authorization",
-                  "X-Api-Key",
-                  "X-Amz-Security-Token",
-                  "X-Amz-User-Agent"
-                ],
-                "allowCredentials": false
-              },
-              "integration": "AWS_PROXY"
-            }
+            "httpApi": {
+              "path": "/{proxy+}",
+              "method": "any"
+            },
+            "resolvedMethod": "ANY",
+            "resolvedPath": "/{proxy+}"
+          },
+          {
+            "httpApi": {
+              "path": "/receipts",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/receipts"
+          },
+          {
+            "httpApi": {
+              "path": "/upload",
+              "method": "POST"
+            },
+            "resolvedMethod": "POST",
+            "resolvedPath": "/upload"
           }
         ],
         "name": "receipt-app-backend-dev-api",
@@ -585,7 +613,7 @@
         "timeout": 6,
         "runtime": "nodejs18.x",
         "vpc": {},
-        "versionLogicalId": "ApiLambdaVersionYs3vEydVPgrVM7soBRuC13pSBQ4tRyTXPjVtSO3HUJ8"
+        "versionLogicalId": "ApiLambdaVersionJvHQRGU3SnxUYnKKD3EuQCXTNwSYcgvizBwLiXvfkU"
       }
     },
     "configValidationMode": "warn",
@@ -611,7 +639,7 @@
     "artifact": "C:\\Users\\vedti\\OneDrive\\Desktop - NEW\\NUS_CS\\OwnStuff\\reciet\\receipt_tracker\\api\\.serverless\\receipt-app-backend.zip"
   },
   "package": {
-    "artifactDirectoryName": "serverless/receipt-app-backend/dev/1743586298443-2025-04-02T09:31:38.443Z",
+    "artifactDirectoryName": "serverless/receipt-app-backend/dev/1743598438642-2025-04-02T12:53:58.642Z",
     "artifact": "receipt-app-backend.zip"
   }
 }

@@ -173,3 +173,6 @@ cython_debug/
 receipt_tracker/ReceiptAnalyzerApp/node_modules
 
 node_modules
+api/node_modules
+api/.serverless
+api/.env

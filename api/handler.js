@@ -1,10 +1,18 @@
 'use strict';
 
 const { createClient } = require('@supabase/supabase-js');
-const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+const { 
+    S3Client, 
+    PutObjectCommand, 
+    GetObjectCommand 
+} = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const jwt = require('jsonwebtoken');
-const formidable = require('formidable');
+const Busboy = require('busboy');
 const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { v4: uuidv4 } = require('uuid');
 
 // Initialize Supabase Admin Client
 const supabase = createClient(
@@ -15,6 +23,48 @@ const supabase = createClient(
 // Initialize S3 Client
 const s3Client = new S3Client({ region: process.env.AWS_REGION || 'ap-southeast-1' });
 const bucketName = process.env.S3_BUCKET_NAME;
+
+// Standard CORS headers for all responses
+const corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-Amz-User-Agent',
+    'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS'
+};
+
+// --- Helper: Create standardized response with CORS ---
+const createResponse = (statusCode, body) => {
+    return {
+        statusCode,
+        headers: {
+            'Content-Type': 'application/json',
+            ...corsHeaders
+        },
+        body: JSON.stringify(body)
+    };
+};
+
+// --- Helper: Generate a pre-signed URL for S3 object ---
+const generatePresignedUrl = async (s3Uri) => {
+    // Parse the S3 URI to get bucket and key
+    // s3Uri format: s3://bucket-name/path/to/object
+    const parts = s3Uri.replace('s3://', '').split('/');
+    const bucket = parts[0];
+    const key = parts.slice(1).join('/');
+    
+    try {
+        const command = new GetObjectCommand({
+            Bucket: bucket,
+            Key: key
+        });
+        
+        // Generate a pre-signed URL that expires in 1 hour (3600 seconds)
+        const signedUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+        return signedUrl;
+    } catch (error) {
+        console.error('Error generating pre-signed URL:', error);
+        return null;
+    }
+};
 
 // --- Helper: Verify JWT and get User ID ---
 const verifyTokenAndGetUser = (event) => {
@@ -45,6 +95,62 @@ const placeholderProcessReceipt = async (imageBuffer) => {
     return `Placeholder Text: Processed receipt at ${new Date().toISOString()}`;
 };
 
+// --- Helper: Parse multipart form data using Busboy ---
+const parseMultipartForm = (event) => {
+    return new Promise((resolve, reject) => {
+        const boundary = event.headers['content-type'].split('=')[1];
+        const busboy = Busboy({ headers: { 'content-type': event.headers['content-type'] } });
+        
+        const fields = {};
+        const files = {};
+        const tmpdir = os.tmpdir();
+        
+        busboy.on('field', (fieldname, val) => {
+            fields[fieldname] = val;
+        });
+        
+        busboy.on('file', (fieldname, fileStream, info) => {
+            const { filename, encoding, mimeType } = info;
+            
+            console.log(`Processing file: ${filename}, mimetype: ${mimeType}`);
+            
+            // Create a temporary file
+            const tmpFilePath = path.join(tmpdir, `${uuidv4()}-${filename}`);
+            const writeStream = fs.createWriteStream(tmpFilePath);
+            
+            fileStream.pipe(writeStream);
+            
+            fileStream.on('end', () => {
+                files[fieldname] = {
+                    filepath: tmpFilePath,
+                    originalFilename: filename,
+                    mimetype: mimeType
+                };
+            });
+        });
+        
+        busboy.on('finish', () => {
+            resolve({ fields, files });
+        });
+        
+        busboy.on('error', (error) => {
+            reject(new Error(`Error parsing form data: ${error.message}`));
+        });
+        
+        // Handle the API Gateway event format
+        if (event.body) {
+            const bodyBuffer = event.isBase64Encoded 
+                ? Buffer.from(event.body, 'base64') 
+                : Buffer.from(event.body);
+                
+            busboy.write(bodyBuffer);
+            busboy.end();
+        } else {
+            reject(new Error('Missing request body'));
+        }
+    });
+};
+
 // --- API Endpoint Logic ---
 module.exports.endpoint = async (event) => {
     console.log('Received event:', JSON.stringify(event, null, 2));
@@ -63,11 +169,7 @@ module.exports.endpoint = async (event) => {
     if (httpMethod === 'OPTIONS') {
         return {
             statusCode: 200,
-            headers: {
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token',
-                'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS'
-            },
+            headers: corsHeaders,
             body: ''
         };
     }
@@ -78,14 +180,7 @@ module.exports.endpoint = async (event) => {
     
     if (!user && !isPublicPath) {
         console.log('Authentication required and failed or missing for path:', path);
-        return {
-            statusCode: 401,
-            body: JSON.stringify({ message: 'Unauthorized' }),
-            headers: {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*',
-            },
-        };
+        return createResponse(401, { message: 'Unauthorized' });
     }
 
     try {
@@ -97,140 +192,86 @@ module.exports.endpoint = async (event) => {
 
         // --- Route: Upload Receipt ---
         if (endpoint === 'upload' && httpMethod === 'POST') {
-            if (!user) return { 
-                statusCode: 401, 
-                body: JSON.stringify({ message: 'Unauthorized' }), 
-                headers: { 
-                    'Content-Type': 'application/json',
-                    'Access-Control-Allow-Origin': '*',
-                }
-            };
+            if (!user) return createResponse(401, { message: 'Unauthorized' });
 
             const contentType = event.headers['content-type'] || event.headers['Content-Type'];
             if (!contentType || !contentType.startsWith('multipart/form-data')) {
-                return { 
-                    statusCode: 400, 
-                    body: JSON.stringify({ message: 'Content-Type must be multipart/form-data' }),
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Access-Control-Allow-Origin': '*',
-                    }
-                };
+                return createResponse(400, { message: 'Content-Type must be multipart/form-data' });
             }
 
-            // Use formidable to parse multipart data
-            const form = formidable({ multiples: false });
-
-            // Promise wrapper for formidable parsing
-            const parseForm = () => new Promise((resolve, reject) => {
-                if (!event.body) {
-                   return reject(new Error("Request body is missing"));
+            try {
+                // Parse the multipart form data
+                const { files } = await parseMultipartForm(event);
+                
+                if (!files.receiptImage) {
+                    return createResponse(400, { message: 'Missing "receiptImage" part in form data' });
                 }
-
-                const bodyBuffer = event.isBase64Encoded 
-                    ? Buffer.from(event.body, 'base64') 
-                    : Buffer.from(event.body);
-
-                const pseudoReq = {
-                    headers: event.headers,
-                    body: bodyBuffer
+                
+                const uploadedFile = files.receiptImage;
+                console.log('File parsed:', uploadedFile.originalFilename, uploadedFile.mimetype);
+                
+                // Read the file content
+                const imageBuffer = fs.readFileSync(uploadedFile.filepath);
+                const originalFilename = uploadedFile.originalFilename || 'receipt.jpg';
+                const s3Key = `receipts/${user.id}/${Date.now()}_${originalFilename}`;
+                
+                // 1. Upload to S3
+                console.log(`Uploading ${s3Key} to bucket ${bucketName}`);
+                const s3Params = {
+                    Bucket: bucketName,
+                    Key: s3Key,
+                    Body: imageBuffer,
+                    ContentType: uploadedFile.mimetype || 'image/jpeg',
                 };
-
-                form.parse(pseudoReq, async (err, fields, files) => {
-                    if (err) {
-                        console.error('Formidable parsing error:', err);
-                        return reject(new Error(`Failed to parse form data: ${err.message || err}`));
-                    }
-
-                    const file = files.receiptImage;
-                    if (!file) {
-                        return reject(new Error('Missing "receiptImage" part in form data'));
-                    }
-
-                    const uploadedFile = Array.isArray(file) ? file[0] : file;
-                    if (!uploadedFile || !uploadedFile.filepath) {
-                        return reject(new Error('Uploaded file data is invalid or missing filepath.'));
-                    }
-
-                    console.log('File parsed:', uploadedFile.originalFilename, uploadedFile.mimetype, uploadedFile.size);
-
-                    try {
-                        // Read the file content
-                        const imageBuffer = fs.readFileSync(uploadedFile.filepath);
-                        const originalFilename = uploadedFile.originalFilename || 'receipt.jpg';
-                        const fileExtension = originalFilename.split('.').pop() || 'jpg';
-                        const s3Key = `receipts/${user.id}/${Date.now()}_${originalFilename}`;
-
-                        // 1. Upload to S3
-                        console.log(`Uploading ${s3Key} to bucket ${bucketName}`);
-                        const s3Params = {
-                            Bucket: bucketName,
-                            Key: s3Key,
-                            Body: imageBuffer,
-                            ContentType: uploadedFile.mimetype || 'image/jpeg',
-                        };
-                        
-                        await s3Client.send(new PutObjectCommand(s3Params));
-                        const imageUrl = `s3://${bucketName}/${s3Key}`;
-                        console.log('Image uploaded to S3:', imageUrl);
-
-                        // Cleanup temporary file
-                        fs.unlinkSync(uploadedFile.filepath);
-
-                        // 2. Process receipt (placeholder)
-                        const extractedText = await placeholderProcessReceipt(imageBuffer);
-                        console.log('Placeholder processing complete.');
-
-                        // 3. Store metadata in Supabase
-                        const { data: dbData, error: dbError } = await supabase
-                            .from('receipts')
-                            .insert({
-                                user_id: user.id,
-                                image_url: imageUrl,
-                                extracted_text: extractedText,
-                                store_name: null,
-                                total_amount: null,
-                                purchase_date: null,
-                            })
-                            .select()
-                            .single();
-
-                        if (dbError) {
-                            console.error('Supabase insert error:', dbError);
-                            throw new Error(`Failed to store receipt metadata: ${dbError.message}`);
-                        }
-
-                        console.log('Metadata stored in Supabase:', dbData);
-                        resolve({
-                            statusCode: 201,
-                            body: JSON.stringify({
-                                message: 'Receipt uploaded successfully',
-                                receipt: dbData
-                            }),
-                            headers: { 
-                                'Content-Type': 'application/json',
-                                'Access-Control-Allow-Origin': '*',
-                            },
-                        });
-                    } catch (innerError) {
-                        console.error('Error during upload processing:', innerError);
-                        reject(innerError);
+                
+                await s3Client.send(new PutObjectCommand(s3Params));
+                const imageUrl = `s3://${bucketName}/${s3Key}`;
+                console.log('Image uploaded to S3:', imageUrl);
+                
+                // Cleanup temporary file
+                fs.unlinkSync(uploadedFile.filepath);
+                
+                // 2. Process receipt (placeholder)
+                const extractedText = await placeholderProcessReceipt(imageBuffer);
+                console.log('Placeholder processing complete.');
+                
+                // 3. Store metadata in Supabase
+                const { data: dbData, error: dbError } = await supabase
+                    .from('receipts')
+                    .insert({
+                        user_id: user.id,
+                        image_url: imageUrl,
+                        extracted_text: extractedText,
+                        store_name: null,
+                        total_amount: null,
+                        purchase_date: null,
+                    })
+                    .select()
+                    .single();
+                
+                if (dbError) {
+                    console.error('Supabase insert error:', dbError);
+                    throw new Error(`Failed to store receipt metadata: ${dbError.message}`);
+                }
+                
+                // Generate a pre-signed URL for the uploaded image
+                const presignedUrl = await generatePresignedUrl(imageUrl);
+                
+                console.log('Metadata stored in Supabase:', dbData);
+                return createResponse(201, {
+                    message: 'Receipt uploaded successfully',
+                    receipt: {
+                        ...dbData,
+                        presigned_url: presignedUrl
                     }
                 });
-            });
-
-            return await parseForm();
-
+            } catch (error) {
+                console.error('Error processing upload:', error);
+                return createResponse(500, { message: 'Upload failed', error: error.message });
+            }
         // --- Route: Get User's Receipts ---
         } else if (endpoint === 'receipts' && httpMethod === 'GET') {
-            if (!user) return { 
-                statusCode: 401, 
-                body: JSON.stringify({ message: 'Unauthorized' }), 
-                headers: { 
-                    'Content-Type': 'application/json',
-                    'Access-Control-Allow-Origin': '*',
-                }
-            };
+            if (!user) return createResponse(401, { message: 'Unauthorized' });
 
             console.log(`Fetching receipts for user: ${user.id}`);
             const { data, error } = await supabase
@@ -244,48 +285,29 @@ module.exports.endpoint = async (event) => {
                 throw new Error(`Failed to fetch receipts: ${error.message}`);
             }
 
-            console.log(`Found ${data.length} receipts`);
-            return {
-                statusCode: 200,
-                body: JSON.stringify(data),
-                headers: { 
-                    'Content-Type': 'application/json',
-                    'Access-Control-Allow-Origin': '*',
-                },
-            };
+            // Generate pre-signed URLs for all receipt images
+            const receiptsWithUrls = await Promise.all(data.map(async (receipt) => {
+                const presignedUrl = await generatePresignedUrl(receipt.image_url);
+                return {
+                    ...receipt,
+                    presigned_url: presignedUrl
+                };
+            }));
+
+            console.log(`Found ${receiptsWithUrls.length} receipts`);
+            return createResponse(200, receiptsWithUrls);
         }
         // --- Health Check or other routes ---
         else if (path === '/' && httpMethod === 'GET') {
-            return { 
-                statusCode: 200, 
-                body: JSON.stringify({ message: 'API is running' }),
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Access-Control-Allow-Origin': '*',
-                }
-            };
+            return createResponse(200, { message: 'API is running' });
         }
         // --- Route Not Found ---
         else {
             console.log(`Route not found: ${httpMethod} ${path}`);
-            return {
-                statusCode: 404,
-                body: JSON.stringify({ message: 'Not Found', path, method: httpMethod }),
-                headers: { 
-                    'Content-Type': 'application/json',
-                    'Access-Control-Allow-Origin': '*',
-                },
-            };
+            return createResponse(404, { message: 'Not Found', path, method: httpMethod });
         }
     } catch (error) {
         console.error('Unhandled error:', error);
-        return {
-            statusCode: 500,
-            body: JSON.stringify({ message: 'Internal Server Error', error: error.message }),
-            headers: { 
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*',
-            },
-        };
+        return createResponse(500, { message: 'Internal Server Error', error: error.message });
     }
 };

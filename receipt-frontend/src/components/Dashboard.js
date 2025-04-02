@@ -3,8 +3,9 @@ import axios from 'axios';
 import { useAuth } from '../AuthContext';
 import { useNavigate } from 'react-router-dom';
 
-// API_URL should NOT have {proxy+} in it - it should be the base URL of your API Gateway
-const API_URL = process.env.REACT_APP_API_GATEWAY_URL || 'https://9sr015j951.execute-api.ap-southeast-1.amazonaws.com/dev';
+
+const API_URL = process.env.REACT_APP_API_GATEWAY_URL;
+
 
 function Dashboard() {
     const [receipts, setReceipts] = useState([]);
@@ -169,9 +170,22 @@ function Dashboard() {
             {!loadingReceipts && receipts.length === 0 && <p>No receipts found.</p>}
             <ul>
                 {receipts.map((receipt) => (
-                    <li key={receipt.id}>
+                    <li key={receipt.id} style={{ marginBottom: '30px', borderBottom: '1px solid #ccc', paddingBottom: '20px' }}>
                         <p><strong>Uploaded:</strong> {new Date(receipt.created_at).toLocaleString()}</p>
-                        <p><strong>Image:</strong> {receipt.image_url} (Need pre-signed URL to view)</p>
+                        
+                        {receipt.presigned_url ? (
+                            <div>
+                                <p><strong>Receipt Image:</strong></p>
+                                <img 
+                                    src={receipt.presigned_url} 
+                                    alt="Receipt" 
+                                    style={{ maxWidth: '100%', maxHeight: '300px' }} 
+                                />
+                            </div>
+                        ) : (
+                            <p><strong>Image URL:</strong> {receipt.image_url} (No pre-signed URL available)</p>
+                        )}
+                        
                         <p><strong>Extracted Text:</strong></p>
                         <pre style={{ background: '#f4f4f4', padding: '10px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
                             {receipt.extracted_text || '(No text extracted)'}
