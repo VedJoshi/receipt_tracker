@@ -172,3 +172,4 @@ cython_debug/
 
 receipt_tracker/ReceiptAnalyzerApp/node_modules
 
+node_modules
