@@ -3,10 +3,8 @@ import axios from 'axios';
 import { useAuth } from '../AuthContext';
 import { useNavigate } from 'react-router-dom';
 
-const API_URL = process.env.REACT_APP_API_GATEWAY_URL;
-// Use Vite env vars if applicable:
-// const API_URL = import.meta.env.VITE_API_GATEWAY_URL;
-
+// API_URL should NOT have {proxy+} in it - it should be the base URL of your API Gateway
+const API_URL = process.env.REACT_APP_API_GATEWAY_URL || 'https://9sr015j951.execute-api.ap-southeast-1.amazonaws.com/dev';
 
 function Dashboard() {
     const [receipts, setReceipts] = useState([]);
@@ -14,7 +12,7 @@ function Dashboard() {
     const [uploading, setUploading] = useState(false);
     const [loadingReceipts, setLoadingReceipts] = useState(false);
     const [error, setError] = useState('');
-    const { user, session, signOut } = useAuth(); // Get session for JWT
+    const { user, session, signOut } = useAuth();
     const navigate = useNavigate();
 
     // --- Fetch Receipts ---
@@ -27,17 +25,37 @@ function Dashboard() {
             return;
         }
         try {
+            console.log('Using API URL:', `${API_URL}/receipts`);
+            console.log('Auth token:', session.access_token.substring(0, 10) + '...');
+            
             const response = await axios.get(`${API_URL}/receipts`, {
                 headers: {
-                    Authorization: `Bearer ${session.access_token}`, // Send JWT
+                    Authorization: `Bearer ${session.access_token}`,
                 },
             });
+            console.log('Receipt fetch response:', response.data);
             setReceipts(response.data);
         } catch (err) {
-            console.error("Error fetching receipts:", err.response?.data || err.message);
-            setError(err.response?.data?.message || 'Failed to fetch receipts');
+            console.error("Error fetching receipts:", err);
+            
+            // Improved error handling
+            if (err.response) {
+                // The request was made and the server responded with a status code
+                console.error("Response data:", err.response.data);
+                console.error("Response status:", err.response.status);
+                console.error("Response headers:", err.response.headers);
+                setError(`Failed to fetch receipts: ${err.response.status} - ${JSON.stringify(err.response.data)}`);
+            } else if (err.request) {
+                // Request was made but no response received (likely CORS issue)
+                console.error("No response received:", err.request);
+                setError("CORS error or no response from server. Check network tab for details.");
+            } else {
+                // Something happened in setting up the request
+                console.error("Error message:", err.message);
+                setError(`Failed to fetch receipts: ${err.message}`);
+            }
+            
             if (err.response?.status === 401) {
-                // Handle unauthorized, maybe force logout
                 signOut();
                 navigate('/login');
             }
@@ -51,12 +69,9 @@ function Dashboard() {
         if (session) {
             fetchReceipts();
         } else {
-            // If no session, clear receipts and potentially redirect
             setReceipts([]);
-            // navigate('/login'); // Optional: Force redirect if session lost
         }
-         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [session]); // Re-run when session changes
+    }, [session]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // --- Handle File Upload ---
     const handleFileChange = (e) => {
@@ -73,28 +88,38 @@ function Dashboard() {
         setUploading(true);
 
         const formData = new FormData();
-        formData.append('receiptImage', file); // Name must match backend expectation
+        formData.append('receiptImage', file);
 
         try {
+            console.log('Uploading file:', file.name, file.type, file.size);
+            console.log('Using API URL:', `${API_URL}/upload`);
+            
             const response = await axios.post(`${API_URL}/upload`, formData, {
                 headers: {
                     'Content-Type': 'multipart/form-data',
-                    Authorization: `Bearer ${session.access_token}`, // Send JWT
+                    Authorization: `Bearer ${session.access_token}`,
                 },
             });
             console.log('Upload successful:', response.data);
-            setFile(null); // Clear file input
-            document.getElementById('receipt-upload-input').value = ''; // Reset file input visually
-            // Add the new receipt to the top of the list (optimistic update or re-fetch)
-            // Option 1: Add directly (simple)
-            // setReceipts([response.data.receipt, ...receipts]);
-            // Option 2: Re-fetch the list to be sure
-             fetchReceipts();
+            setFile(null);
+            document.getElementById('receipt-upload-input').value = '';
+            fetchReceipts();
         } catch (err) {
-            console.error("Error uploading receipt:", err.response?.data || err.message);
-            setError(err.response?.data?.message || 'Upload failed');
-              if (err.response?.status === 401) {
-                // Handle unauthorized, maybe force logout
+            console.error("Error uploading receipt:", err);
+            
+            // Improved error handling
+            if (err.response) {
+                console.error("Response data:", err.response.data);
+                console.error("Response status:", err.response.status);
+                setError(`Upload failed: ${err.response.status} - ${JSON.stringify(err.response.data)}`);
+            } else if (err.request) {
+                console.error("No response received:", err.request);
+                setError("CORS error or no response from server. Check network tab for details.");
+            } else {
+                setError(`Upload failed: ${err.message}`);
+            }
+            
+            if (err.response?.status === 401) {
                 signOut();
                 navigate('/login');
             }
@@ -104,13 +129,12 @@ function Dashboard() {
     };
 
     // --- Handle Logout ---
-     const handleLogout = async () => {
-         await signOut();
-         navigate('/login'); // Redirect to login after sign out
-     };
+    const handleLogout = async () => {
+        await signOut();
+        navigate('/login');
+    };
 
     if (!user) {
-        // Should be handled by ProtectedRoute, but good as a fallback
         return <p>Loading user or redirecting...</p>;
     }
 
@@ -118,7 +142,7 @@ function Dashboard() {
         <div>
             <h2>Dashboard</h2>
             <p>Welcome, {user.email}!</p>
-             <button onClick={handleLogout}>Log Out</button>
+            <button onClick={handleLogout}>Log Out</button>
 
             <hr />
 
@@ -127,7 +151,7 @@ function Dashboard() {
                 <input
                     id="receipt-upload-input"
                     type="file"
-                    accept="image/*" // Accept common image types
+                    accept="image/*"
                     onChange={handleFileChange}
                     required
                 />
@@ -147,7 +171,6 @@ function Dashboard() {
                 {receipts.map((receipt) => (
                     <li key={receipt.id}>
                         <p><strong>Uploaded:</strong> {new Date(receipt.created_at).toLocaleString()}</p>
-                        {/* Displaying S3 URI - In reality, you'd generate a presigned URL to view */}
                         <p><strong>Image:</strong> {receipt.image_url} (Need pre-signed URL to view)</p>
                         <p><strong>Extracted Text:</strong></p>
                         <pre style={{ background: '#f4f4f4', padding: '10px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>

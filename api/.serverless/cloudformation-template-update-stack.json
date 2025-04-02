@@ -170,7 +170,7 @@
           "S3Bucket": {
             "Ref": "ServerlessDeploymentBucket"
           },
-          "S3Key": "serverless/receipt-app-backend/dev/1743584230253-2025-04-02T08:57:10.253Z/receipt-app-backend.zip"
+          "S3Key": "serverless/receipt-app-backend/dev/1743586298443-2025-04-02T09:31:38.443Z/receipt-app-backend.zip"
         },
         "Handler": "handler.endpoint",
         "Runtime": "nodejs18.x",
@@ -196,14 +196,14 @@
         "ApiLogGroup"
       ]
     },
-    "ApiLambdaVersionDcA9i4CTEzx272et90uVt4kDppcXP4beJ1UykSdhI": {
+    "ApiLambdaVersionYs3vEydVPgrVM7soBRuC13pSBQ4tRyTXPjVtSO3HUJ8": {
       "Type": "AWS::Lambda::Version",
       "DeletionPolicy": "Retain",
       "Properties": {
         "FunctionName": {
           "Ref": "ApiLambdaFunction"
         },
-        "CodeSha256": "hSWejIB6U1d5Dk51ykS9BCeQZNQPFLRCe9RqauawCUY="
+        "CodeSha256": "4k+V2Ok9yNkHHOFEvb06PI/krOBZd7F2NNBpAmkNMOI="
       }
     },
     "ApiGatewayRestApi": {
@@ -261,7 +261,7 @@
               "StatusCode": "200",
               "ResponseParameters": {
                 "method.response.header.Access-Control-Allow-Origin": "'*'",
-                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-Amz-User-Agent,X-Amzn-Trace-Id'",
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-Amz-User-Agent'",
                 "method.response.header.Access-Control-Allow-Methods": "'OPTIONS,DELETE,GET,HEAD,PATCH,POST,PUT'"
               },
               "ResponseTemplates": {
@@ -324,7 +324,7 @@
         "ApiLambdaPermissionApiGateway"
       ]
     },
-    "ApiGatewayDeployment1743584221577": {
+    "ApiGatewayDeployment1743586289936": {
       "Type": "AWS::ApiGateway::Deployment",
       "Properties": {
         "RestApiId": {
@@ -387,7 +387,7 @@
     "ApiLambdaFunctionQualifiedArn": {
       "Description": "Current Lambda function version",
       "Value": {
-        "Ref": "ApiLambdaVersionDcA9i4CTEzx272et90uVt4kDppcXP4beJ1UykSdhI"
+        "Ref": "ApiLambdaVersionYs3vEydVPgrVM7soBRuC13pSBQ4tRyTXPjVtSO3HUJ8"
       },
       "Export": {
         "Name": "sls-receipt-app-backend-dev-ApiLambdaFunctionQualifiedArn"
