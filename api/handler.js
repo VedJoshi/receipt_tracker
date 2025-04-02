@@ -96,6 +96,7 @@ const placeholderProcessReceipt = async (imageBuffer) => {
 };
 
 // --- Helper: Parse multipart form data using Busboy ---
+// --- Helper: Parse multipart form data using Busboy ---
 const parseMultipartForm = (event) => {
     return new Promise((resolve, reject) => {
         const boundary = event.headers['content-type'].split('=')[1];
@@ -104,6 +105,7 @@ const parseMultipartForm = (event) => {
         const fields = {};
         const files = {};
         const tmpdir = os.tmpdir();
+        const fileWritePromises = []; // Track all file write operations
         
         busboy.on('field', (fieldname, val) => {
             fields[fieldname] = val;
@@ -118,19 +120,58 @@ const parseMultipartForm = (event) => {
             const tmpFilePath = path.join(tmpdir, `${uuidv4()}-${filename}`);
             const writeStream = fs.createWriteStream(tmpFilePath);
             
+            // Create a promise that resolves when the file is written
+            const writePromise = new Promise((resolveFile, rejectFile) => {
+                writeStream.on('finish', () => {
+                    // Log the file size to verify it's not empty
+                    const stats = fs.statSync(tmpFilePath);
+                    console.log(`File written to ${tmpFilePath}, size: ${stats.size} bytes`);
+                    
+                    files[fieldname] = {
+                        filepath: tmpFilePath,
+                        originalFilename: filename,
+                        mimetype: mimeType,
+                        size: stats.size
+                    };
+                    resolveFile();
+                });
+                
+                writeStream.on('error', (error) => {
+                    console.error(`Error writing to ${tmpFilePath}:`, error);
+                    rejectFile(error);
+                });
+            });
+            
+            // Add this write operation to our tracking array
+            fileWritePromises.push(writePromise);
+            
+            // Pipe the upload stream to the file
             fileStream.pipe(writeStream);
             
+            // Handle errors in the incoming stream
+            fileStream.on('error', (error) => {
+                console.error(`Error in file stream for ${filename}:`, error);
+                writeStream.end();
+            });
+            
+            // Close the write stream when the file stream ends
             fileStream.on('end', () => {
-                files[fieldname] = {
-                    filepath: tmpFilePath,
-                    originalFilename: filename,
-                    mimetype: mimeType
-                };
+                writeStream.end();
             });
         });
         
         busboy.on('finish', () => {
-            resolve({ fields, files });
+            // Wait for all file writes to complete before resolving
+            Promise.all(fileWritePromises)
+                .then(() => {
+                    // All files have been processed, now we can resolve
+                    console.log(`All files processed successfully: ${Object.keys(files).length} files`);
+                    resolve({ fields, files });
+                })
+                .catch((error) => {
+                    console.error('Error processing files:', error);
+                    reject(error);
+                });
         });
         
         busboy.on('error', (error) => {
