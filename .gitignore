@@ -177,3 +177,5 @@ api/node_modules
 api/.serverless
 api/.env
 .serverless
+Dockerfile
+docker-compose.yml
