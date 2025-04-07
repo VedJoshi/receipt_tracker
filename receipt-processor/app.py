@@ -1,9 +1,8 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import os
-import tempfile
-import base64
-import json
 import logging
+import json
 from receipt_processor import process_receipt
 
 # Set up logging
@@ -11,59 +10,64 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
 
 @app.route('/health', methods=['GET'])
 def health_check():
-    return jsonify({"status": "healthy"})
+    """Health check endpoint"""
+    return jsonify({"status": "healthy", "service": "receipt-processor"})
 
 @app.route('/process', methods=['POST'])
 def process_receipt_endpoint():
+    """
+    Endpoint to process a receipt image
+    Accepts:
+    - base64 encoded image in 'image' field
+    - or a file upload with name 'receiptImage'
+    """
     try:
-        # Log request received
         logger.info("Received receipt processing request")
         
-        # Get the image from the request
-        request_data = request.json
-        if not request_data or 'image' not in request_data:
-            return jsonify({"error": "No image data provided"}), 400
+        # Check if the request has a JSON body with an image field
+        if request.is_json and 'image' in request.json:
+            # Get base64 image from JSON body
+            image_data = request.json['image']
+            logger.info("Processing base64 image from JSON body")
         
-        # Decode base64 image
-        try:
-            image_data = base64.b64decode(request_data['image'])
-            logger.info(f"Decoded image, size: {len(image_data)} bytes")
-        except Exception as e:
-            logger.error(f"Failed to decode base64 image: {str(e)}")
-            return jsonify({"error": "Invalid base64 image data"}), 400
+        # Check if the request is a multipart form with a file
+        elif request.files and 'receiptImage' in request.files:
+            # Get file from form
+            file = request.files['receiptImage']
+            logger.info(f"Processing file upload: {file.filename}")
+            
+            # Read the file
+            image_data = file.read()
         
-        # Save to temporary file
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as temp:
-            temp.write(image_data)
-            temp_filename = temp.name
-            logger.info(f"Image saved to temporary file: {temp_filename}")
+        else:
+            logger.error("No image data provided")
+            return jsonify({"error": "No image data provided. Send either a base64 encoded 'image' in JSON or a file upload with name 'receiptImage'"}), 400
         
-        try:
-            # Process with our OpenCV receipt processor
-            result = process_receipt(temp_filename)
-            logger.info(f"Receipt processed successfully: {json.dumps(result)}")
-            
-            # Clean up the temporary file
-            os.unlink(temp_filename)
-            logger.info(f"Temporary file removed: {temp_filename}")
-            
-            return jsonify(result)
-        except Exception as e:
-            logger.error(f"Error processing receipt: {str(e)}")
-            # Clean up the temporary file even if processing fails
-            try:
-                os.unlink(temp_filename)
-                logger.info(f"Temporary file removed after error: {temp_filename}")
-            except:
-                pass
-            return jsonify({"error": f"Receipt processing failed: {str(e)}"}), 500
-            
+        # Process the receipt
+        result = process_receipt(image_data)
+        
+        # Check if there was an error
+        if 'error' in result and result['error']:
+            logger.error(f"Error processing receipt: {result['error']}")
+            return jsonify({"error": f"Receipt processing failed: {result['error']}"}), 500
+        
+        logger.info("Receipt processed successfully")
+        return jsonify(result)
+        
     except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}")
+        logger.error(f"Unexpected error: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    # Get port from the environment or use default 5000
+    port = int(os.environ.get('PORT', 5000))
+    
+    # Enable debug mode if not in production
+    debug = os.environ.get('FLASK_ENV', 'development') == 'development'
+    
+    logger.info(f"Starting receipt processor service on port {port}, debug={debug}")
+    app.run(host='0.0.0.0', port=port, debug=debug)
