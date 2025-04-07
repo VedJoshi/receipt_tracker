@@ -179,3 +179,5 @@ api/.env
 .serverless
 Dockerfile
 docker-compose.yml
+.env.template
+setup-s3-events.sh
