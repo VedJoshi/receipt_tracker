@@ -87,44 +87,62 @@ function Dashboard() {
         setError('');
         setUploading(true);
 
-        const formData = new FormData();
-        formData.append('receiptImage', file);
-
         try {
             console.log('Uploading file:', file.name, file.type, file.size);
-            console.log('Using API URL:', `${API_URL}/upload`);
             
-            const response = await axios.post(`${API_URL}/upload`, formData, {
-                headers: {
-                    'Content-Type': 'multipart/form-data',
-                    Authorization: `Bearer ${session.access_token}`,
-                },
-            });
-            console.log('Upload successful:', response.data);
-            setFile(null);
-            document.getElementById('receipt-upload-input').value = '';
-            fetchReceipts();
+            // Convert file to base64
+            const reader = new FileReader();
+            reader.onloadend = async () => {
+                try {
+                    const base64data = reader.result;
+                    
+                    // Send to API Gateway endpoint
+                    const response = await axios.post(
+                        process.env.REACT_APP_API_GATEWAY_URL + '/upload',
+                        { image: base64data },
+                        {
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${session.access_token}`
+                            }
+                        }
+                    );
+                    
+                    console.log('Upload successful:', response.data);
+                    setFile(null);
+                    document.getElementById('receipt-upload-input').value = '';
+                    fetchReceipts();
+                } catch (err) {
+                    handleError(err);
+                } finally {
+                    setUploading(false);
+                }
+            };
+            reader.readAsDataURL(file);
         } catch (err) {
-            console.error("Error uploading receipt:", err);
-            
-            // Improved error handling
-            if (err.response) {
-                console.error("Response data:", err.response.data);
-                console.error("Response status:", err.response.status);
-                setError(`Upload failed: ${err.response.status} - ${JSON.stringify(err.response.data)}`);
-            } else if (err.request) {
-                console.error("No response received:", err.request);
-                setError("CORS error or no response from server. Check network tab for details.");
-            } else {
-                setError(`Upload failed: ${err.message}`);
-            }
-            
-            if (err.response?.status === 401) {
-                signOut();
-                navigate('/login');
-            }
-        } finally {
+            handleError(err);
             setUploading(false);
+        }
+    };
+
+    // Helper function to handle errors
+    const handleError = (err) => {
+        console.error("Error uploading receipt:", err);
+        
+        if (err.response) {
+            console.error("Response data:", err.response.data);
+            console.error("Response status:", err.response.status);
+            setError(`Upload failed: ${err.response.status} - ${JSON.stringify(err.response.data)}`);
+        } else if (err.request) {
+            console.error("No response received:", err.request);
+            setError("Network error. Check your connection and try again.");
+        } else {
+            setError(`Upload failed: ${err.message}`);
+        }
+        
+        if (err.response?.status === 401) {
+            signOut();
+            navigate('/login');
         }
     };
 
