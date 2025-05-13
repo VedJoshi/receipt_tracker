@@ -10,5 +10,26 @@
     "expo-gl": "^13.6.0",
     "react-native-url-polyfill": "^2.0.0",
     "tesseract.js": "^6.0.0"
-  }
+  },
+  "name": "receipt_tracker",
+  "version": "1.0.0",
+  "description": "This project provides a complete solution for extracting text from receipt images using a custom model approach. It includes:",
+  "main": "index.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/VedJoshi/receipt_tracker.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/VedJoshi/receipt_tracker/issues"
+  },
+  "homepage": "https://github.com/VedJoshi/receipt_tracker#readme"
 }
