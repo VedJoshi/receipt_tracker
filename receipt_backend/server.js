@@ -6,6 +6,7 @@ const AWS = require('aws-sdk');
 const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
+const axios = require('axios'); // Add axios
 require('dotenv').config();
 
 const app = express();
@@ -120,11 +121,15 @@ app.post('/upload', upload.single('receiptImage'), async (req, res) => {
         // Get file from request
         let imageBuffer;
         let originalFilename;
+        let base64Image;
         
         if (req.file) {
             // File uploaded through multer
             imageBuffer = fs.readFileSync(req.file.path);
             originalFilename = req.file.originalname || 'receipt.jpg';
+            
+            // Convert to base64 for the processor
+            base64Image = imageBuffer.toString('base64');
             
             // Clean up the temporary file
             fs.unlinkSync(req.file.path);
@@ -132,6 +137,7 @@ app.post('/upload', upload.single('receiptImage'), async (req, res) => {
             // Base64 image in request body
             const base64Data = req.body.image.replace(/^data:image\/\w+;base64,/, '');
             imageBuffer = Buffer.from(base64Data, 'base64');
+            base64Image = base64Data;
             originalFilename = 'receipt.jpg';
         } else {
             return res.status(400).json({ message: 'Missing image file or data' });
@@ -149,8 +155,24 @@ app.post('/upload', upload.single('receiptImage'), async (req, res) => {
         await s3.upload(uploadParams).promise();
         const imageUrl = `s3://${process.env.S3_BUCKET_NAME}/${s3Key}`;
         
-        // Process receipt (placeholder for now)
-        const extractedText = "Sample extracted text";
+        // Process receipt using the Python service
+        let extractedData;
+        try {
+            const processorResponse = await axios.post('http://localhost:5000/process', {
+                image: base64Image
+            });
+            extractedData = processorResponse.data;
+            console.log('Receipt processor response:', extractedData);
+        } catch (processorError) {
+            console.error('Error calling receipt processor:', processorError);
+            extractedData = {
+                extracted_text: "Error processing receipt",
+                store_name: null,
+                total_amount: null,
+                purchase_date: null,
+                items: []
+            };
+        }
         
         // Store metadata in Supabase
         const { data: dbData, error: dbError } = await supabase
@@ -158,11 +180,11 @@ app.post('/upload', upload.single('receiptImage'), async (req, res) => {
             .insert({
                 user_id: userId,
                 image_url: imageUrl,
-                extracted_text: extractedText,
-                store_name: null,
-                total_amount: null,
-                purchase_date: null,
-                items: []
+                extracted_text: extractedData.extracted_text,
+                store_name: extractedData.store_name,
+                total_amount: extractedData.total_amount,
+                purchase_date: extractedData.purchase_date,
+                items: extractedData.items || []
             })
             .select()
             .single();
