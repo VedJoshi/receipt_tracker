@@ -98,19 +98,26 @@ function Dashboard() {
                     
                     // Send to API Gateway endpoint
                     const response = await axios.post(
-                        process.env.REACT_APP_API_GATEWAY_URL + '/upload',
+                        `${API_URL}/upload`,
                         { image: base64data },
                         {
                             headers: {
                                 'Content-Type': 'application/json',
                                 'Authorization': `Bearer ${session.access_token}`
-                            }
+                            },
+                            timeout: 60000 // 60 second timeout for OCR processing
                         }
                     );
                     
                     console.log('Upload successful:', response.data);
                     setFile(null);
                     document.getElementById('receipt-upload-input').value = '';
+                    
+                    // Show success message
+                    if (response.data.receipt?.processing_status === 'failed') {
+                        setError('Receipt uploaded but OCR processing failed. You can edit it manually.');
+                    }
+                    
                     fetchReceipts();
                 } catch (err) {
                     handleError(err);
@@ -183,6 +190,20 @@ function Dashboard() {
         }
         
         return formattedDate.toLocaleDateString();
+    };
+
+    // Helper function to get processing status indicator
+    const getStatusIndicator = (receipt) => {
+        if (receipt.processing_status === 'failed') {
+            return <span style={{ color: 'red', fontSize: '0.8rem' }}>⚠️ OCR Failed</span>;
+        }
+        if (receipt.is_manually_edited) {
+            return <span style={{ color: 'blue', fontSize: '0.8rem' }}>✏️ Edited</span>;
+        }
+        if (receipt.confidence_score && receipt.confidence_score < 0.7) {
+            return <span style={{ color: 'orange', fontSize: '0.8rem' }}>⚡ Low Confidence</span>;
+        }
+        return <span style={{ color: 'green', fontSize: '0.8rem' }}>✅ Processed</span>;
     };
 
     if (!user) {
@@ -268,6 +289,8 @@ function Dashboard() {
                             <div>
                                 <h4 style={{ margin: '0 0 5px 0' }}>
                                     {receipt.store_name || 'Unknown Store'}
+                                    {' '}
+                                    {getStatusIndicator(receipt)}
                                 </h4>
                                 <p style={{ margin: '0', color: '#666' }}>
                                     <strong>Date:</strong> {formatDate(receipt.purchase_date)}
@@ -280,6 +303,11 @@ function Dashboard() {
                                 <p style={{ margin: '0', fontSize: '1.2rem', fontWeight: 'bold' }}>
                                     {formatCurrency(receipt.total_amount)}
                                 </p>
+                                {receipt.confidence_score && (
+                                    <p style={{ margin: '5px 0 0 0', fontSize: '0.8rem', color: '#666' }}>
+                                        Confidence: {(receipt.confidence_score * 100).toFixed(0)}%
+                                    </p>
+                                )}
                             </div>
                         </div>
 

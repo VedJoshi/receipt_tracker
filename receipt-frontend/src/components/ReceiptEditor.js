@@ -1,6 +1,14 @@
 import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+import { useAuth } from '../AuthContext';
+
+const API_URL = process.env.REACT_APP_API_GATEWAY_URL;
 
 const ReceiptEditor = ({ receipt, onSave, onCancel }) => {
+  const { session } = useAuth();
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
   // Initialize state with receipt data or empty values
   const [editedReceipt, setEditedReceipt] = useState({
     id: receipt?.id || '',
@@ -75,9 +83,36 @@ const ReceiptEditor = ({ receipt, onSave, onCancel }) => {
   };
 
   // Handle form submission
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    onSave(editedReceipt);
+    setError('');
+    setSaving(true);
+
+    try {
+      const response = await axios.put(
+        `${API_URL}/receipts/${editedReceipt.id}`,
+        {
+          store_name: editedReceipt.store_name,
+          purchase_date: editedReceipt.purchase_date,
+          total_amount: parseFloat(editedReceipt.total_amount),
+          items: editedReceipt.items
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`
+          }
+        }
+      );
+
+      console.log('Receipt updated successfully:', response.data);
+      onSave(response.data.receipt);
+    } catch (err) {
+      console.error('Error saving receipt:', err);
+      setError(err.response?.data?.message || 'Failed to save receipt');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -277,32 +312,48 @@ const ReceiptEditor = ({ receipt, onSave, onCancel }) => {
           </div>
         )}
 
+        {error && (
+          <div style={{ 
+            color: 'red', 
+            backgroundColor: '#ffebee', 
+            padding: '10px', 
+            borderRadius: '4px', 
+            marginBottom: '20px' 
+          }}>
+            Error: {error}
+          </div>
+        )}
+
         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
           <button 
             type="button" 
             onClick={onCancel}
+            disabled={saving}
             style={{ 
               backgroundColor: '#ccc',
               border: 'none',
               padding: '10px 20px',
               borderRadius: '4px',
-              cursor: 'pointer'
+              cursor: saving ? 'not-allowed' : 'pointer',
+              opacity: saving ? 0.7 : 1
             }}
           >
             Cancel
           </button>
           <button 
             type="submit"
+            disabled={saving}
             style={{ 
               backgroundColor: '#2196F3',
               color: 'white',
               border: 'none',
               padding: '10px 20px',
               borderRadius: '4px',
-              cursor: 'pointer'
+              cursor: saving ? 'not-allowed' : 'pointer',
+              opacity: saving ? 0.7 : 1
             }}
           >
-            Save Changes
+            {saving ? 'Saving...' : 'Save Changes'}
           </button>
         </div>
       </form>
