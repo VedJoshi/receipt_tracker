@@ -8,586 +8,613 @@ import json
 import os
 import logging
 import base64
+from datetime import datetime
+from typing import Dict, List, Optional, Tuple, Any
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Configure pytesseract path based on OS
 if os.name == 'nt':  # Windows
     pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-
-# Configure pytesseract path if running in Docker
-if os.path.exists('/usr/bin/tesseract'):
+elif os.path.exists('/usr/bin/tesseract'):
     pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
 
-def preprocess_image(image_data):
-    """
-    Enhanced preprocessing for receipt images to improve OCR results
+class ReceiptProcessor:
+    """Enhanced receipt processing with multiple OCR strategies and confidence scoring"""
     
-    Args:
-        image_data: Either a bytes object or a file path
-    """
-    # Load image data
-    if isinstance(image_data, str) and os.path.exists(image_data):
-        # Load from file path
-        image = cv2.imread(image_data)
-    else:
-        # Convert bytes to numpy array
+    def __init__(self):
+        self.categories = [
+            'Groceries', 'Restaurants', 'Gas & Fuel', 'Shopping', 
+            'Healthcare', 'Entertainment', 'Transportation', 'Other'
+        ]
+        
+    def test_tesseract(self) -> bool:
+        """Test if Tesseract is available and working"""
+        try:
+            version = pytesseract.get_tesseract_version()
+            logger.info(f"Tesseract version: {version}")
+            return True
+        except Exception as e:
+            logger.error(f"Tesseract not available: {e}")
+            return False
+    
+    def process_receipt(self, image_data: bytes, enhance_quality: bool = True) -> Dict[str, Any]:
+        """
+        Main entry point for receipt processing
+        
+        Args:
+            image_data: Image bytes
+            enhance_quality: Whether to apply quality enhancement
+            
+        Returns:
+            Dictionary with extracted data and confidence scores
+        """
+        try:
+            # Preprocess image with multiple strategies
+            preprocessed_images = self.preprocess_image(image_data, enhance_quality)
+            
+            # Extract text using multiple OCR configurations
+            ocr_results = self.perform_ocr(preprocessed_images)
+            
+            # Select best OCR result based on confidence
+            best_result = self.select_best_ocr_result(ocr_results)
+            
+            if not best_result['text']:
+                return self._create_error_response("No text could be extracted from the image")
+            
+            # Extract structured data
+            extracted_data = self.extract_structured_data(best_result['text'])
+            
+            # Calculate confidence scores
+            confidence_breakdown = self.calculate_confidence_scores(extracted_data, best_result)
+            overall_confidence = sum(confidence_breakdown.values()) / len(confidence_breakdown)
+            
+            # Suggest category
+            suggested_category = self.suggest_category(extracted_data)
+            
+            return {
+                'success': True,
+                'extracted_text': best_result['text'],
+                'store_name': extracted_data['store_name'],
+                'total_amount': extracted_data['total_amount'],
+                'purchase_date': extracted_data['purchase_date'],
+                'items': extracted_data['items'],
+                'suggested_category': suggested_category,
+                'overall_confidence': overall_confidence,
+                'confidence_breakdown': confidence_breakdown,
+                'preprocessing_method': best_result['method'],
+                'ocr_config': best_result['config']
+            }
+            
+        except Exception as e:
+            logger.error(f"Error processing receipt: {e}", exc_info=True)
+            return self._create_error_response(str(e))
+    
+    def preprocess_image(self, image_data: bytes, enhance_quality: bool) -> List[Dict[str, Any]]:
+        """
+        Apply multiple preprocessing strategies to improve OCR accuracy
+        
+        Returns:
+            List of preprocessed images with metadata
+        """
+        # Load image
         nparr = np.frombuffer(image_data, np.uint8)
-        # Decode image
         image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    
-    # Check if image was loaded correctly
-    if image is None:
-        raise ValueError("Failed to decode image")
-    
-    # Store original image for multiple processing attempts
-    original = image.copy()
-    results = []
-    
-    # Attempt 1: Basic grayscale + adaptive threshold
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    thresh = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
-    results.append(thresh)
-    
-    # Attempt 2: Bilateral filtering (preserves edges while removing noise)
-    bilateral = cv2.bilateralFilter(gray, 11, 17, 17)
-    adap_thresh = cv2.adaptiveThreshold(bilateral, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
-    results.append(adap_thresh)
-    
-    # Attempt 3: CLAHE (Contrast Limited Adaptive Histogram Equalization)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    cl1 = clahe.apply(gray)
-    ret, thresh2 = cv2.threshold(cl1, 150, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    results.append(thresh2)
-    
-    # Attempt 4: Sharpening
-    kernel_sharpen = np.array([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]])
-    sharpened = cv2.filter2D(gray, -1, kernel_sharpen)
-    thresh3 = cv2.adaptiveThreshold(sharpened, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
-    results.append(thresh3)
-    
-    # Attempt 5: Deskew (straighten) the image if it's tilted
-    def deskew(img):
-        coords = np.column_stack(np.where(img > 0))
-        angle = cv2.minAreaRect(coords)[-1]
-        if angle < -45:
-            angle = -(90 + angle)
-        else:
-            angle = -angle
-        (h, w) = img.shape[:2]
-        center = (w // 2, h // 2)
-        M = cv2.getRotationMatrix2D(center, angle, 1.0)
-        rotated = cv2.warpAffine(img, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
-        return rotated
-    
-    # Try to deskew the third result (often works well with CLAHE)
-    try:
-        deskewed = deskew(thresh2)
-        results.append(deskewed)
-    except:
-        logger.warning("Deskew operation failed, skipping")
-    
-    # Return all processed images for OCR attempts
-    return results
-
-def extract_text(preprocessed_images):
-    """
-    Extract text from preprocessed images using multiple configurations
-    Returns the best result based on confidence score
-    """
-    best_text = ""
-    best_conf = -1
-    
-    # Different OCR configurations to try
-    configs = [
-        '--oem 3 --psm 4 -l eng',  # Assume a single column of text
-        '--oem 3 --psm 6 -l eng',  # Assume a single uniform block of text
-        '--oem 3 --psm 3 -l eng',  # Fully automatic page segmentation
-        '--oem 1 --psm 4 -l eng',  # Using legacy engine which may work better for some receipts
-        '--oem 1 --psm 6 -l eng'   # Legacy engine with uniform block assumption
-    ]
-    
-    for img in preprocessed_images:
-        pil_image = Image.fromarray(img)
-        for config in configs:
-            try:
-                # Extract text with current configuration
-                text = pytesseract.image_to_string(pil_image, config=config)
-                
-                # Calculate a simple confidence score based on text length and non-empty lines
-                lines = [line for line in text.split('\n') if line.strip()]
-                if not lines:
-                    continue
-                
-                conf_score = len(text) * len(lines)
-                
-                # Check if it has some expected receipt patterns to boost confidence
-                if re.search(r'total|amount|price|subtotal|balance|item|qty|quantity', text, re.IGNORECASE):
-                    conf_score *= 1.5
-                
-                if re.search(r'\$\d+\.\d{2}|\d+\.\d{2}', text):
-                    conf_score *= 1.2
-                    
-                # If this is the best result so far, save it
-                if conf_score > best_conf:
-                    best_text = text
-                    best_conf = conf_score
-            except Exception as e:
-                logger.error(f"OCR error with config {config}: {str(e)}")
-                continue
-    
-    if best_text:
-        logger.info(f"Text extraction completed. Confidence score: {best_conf}")
-        return best_text
-    else:
-        logger.warning("Failed to extract text from all attempts")
-        return ""
-
-def extract_store_name(text):
-    """Extract store name from OCR text with improved patterns"""
-    # Split text into lines
-    lines = text.split('\n')
-    
-    # Typically, store name appears in the first few lines
-    store_candidates = [line.strip() for line in lines[:7] if line.strip()]
-    
-    # Common store name indicators
-    store_indicators = [
-        r'welcome to',
-        r'store:',
-        r'restaurant:',
-        r'shop:',
-        r'location:',
-        r'branch:',
-    ]
-    
-    # First look for lines with store indicators
-    for indicator in store_indicators:
-        for line in store_candidates:
-            if re.search(indicator, line.lower()):
-                # Return the part after the indicator
-                match = re.search(rf'{indicator}\s*(.*)', line.lower())
-                if match:
-                    return match.group(1).strip()
-                else:
-                    # Or just return the whole line if it's short
-                    if len(line) < 30:
-                        return line.strip()
-    
-    # Return the first non-empty candidate that is not a date, time, or address pattern
-    for candidate in store_candidates:
-        # Skip if it looks like a date
-        if re.search(r'\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4}', candidate):
-            continue
         
-        # Skip if it looks like a time
-        if re.search(r'\d{1,2}:\d{2}', candidate):
-            continue
+        if image is None:
+            raise ValueError("Failed to decode image")
         
-        # Skip if it looks like a phone number
-        if re.search(r'\d{3}[.\-\s]?\d{3}[.\-\s]?\d{4}', candidate):
-            continue
+        # Store results from different preprocessing methods
+        results = []
         
-        # Skip if it has too many digits
-        if sum(c.isdigit() for c in candidate) > len(candidate) / 3:
-            continue
+        # Method 1: Basic grayscale + adaptive threshold
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        results.append({
+            'image': gray,
+            'method': 'grayscale',
+            'description': 'Basic grayscale conversion'
+        })
         
-        # Skip if too short
-        if len(candidate) < 3:
-            continue
+        if enhance_quality:
+            # Method 2: Bilateral filter + Otsu's threshold
+            bilateral = cv2.bilateralFilter(gray, 11, 17, 17)
+            _, otsu = cv2.threshold(bilateral, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            results.append({
+                'image': otsu,
+                'method': 'bilateral_otsu',
+                'description': 'Bilateral filter with Otsu threshold'
+            })
             
-        # Skip common receipt headers
-        skip_terms = ['receipt', 'invoice', 'order', 'tel:', 'phone:', 'fax:', 
-                     'customer copy', 'merchant copy']
-        if any(term in candidate.lower() for term in skip_terms):
-            continue
+            # Method 3: CLAHE (Contrast Limited Adaptive Histogram Equalization)
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            enhanced = clahe.apply(gray)
+            _, thresh_clahe = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            results.append({
+                'image': thresh_clahe,
+                'method': 'clahe',
+                'description': 'CLAHE contrast enhancement'
+            })
             
-        return candidate
+            # Method 4: Adaptive threshold with noise reduction
+            blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+            adaptive = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                                           cv2.THRESH_BINARY, 11, 2)
+            results.append({
+                'image': adaptive,
+                'method': 'adaptive_gaussian',
+                'description': 'Adaptive Gaussian threshold'
+            })
+            
+            # Method 5: Deskew if needed
+            deskewed = self._deskew_image(gray)
+            if deskewed is not None:
+                _, deskewed_thresh = cv2.threshold(deskewed, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                results.append({
+                    'image': deskewed_thresh,
+                    'method': 'deskewed',
+                    'description': 'Deskewed and thresholded'
+                })
+        
+        return results
     
-    return "Unknown Store"
-
-def extract_total_amount(text):
-    """Extract total amount from OCR text with improved patterns"""
-    # Patterns to look for total amount
-    total_patterns = [
-        # Most common total patterns
-        r'(?:total|tot)(?:[\s:]*|[\s:]*\$[\s:]*)([\d,]+\.\d{2})',
-        r'(?:total|tot)(?:[\s:]*|[\s:]*\$[\s:]*)([\d,]+)',
-        # Patterns with currency symbols
-        r'(?:total|tot|sum)[\s:]*[\$£€]([\d,]+\.\d{2})',
-        r'[\$£€]\s*([\d,]+\.\d{2})(?=\s*(?:total|tot|sum))',
-        # Additional total variations
-        r'(?:amount|amt)(?:[\s:]*|[\s:]*\$[\s:]*)([\d,]+\.\d{2})',
-        r'(?:grand total|g\.total|g total)(?:[\s:]*|[\s:]*\$[\s:]*)([\d,]+\.\d{2})',
-        r'(?:balance|bal)(?:[\s:]*|[\s:]*\$[\s:]*)([\d,]+\.\d{2})',
-        r'(?:amount due|amt due)(?:[\s:]*|[\s:]*\$[\s:]*)([\d,]+\.\d{2})',
-        # Look for word "TOTAL" near the end of receipt with a number nearby
-        r'total\W+[\$£€]?\s*([\d,]+\.\d{2})',
-        r'[\$£€]?\s*([\d,]+\.\d{2})\W+total',
-    ]
+    def _deskew_image(self, image: np.ndarray) -> Optional[np.ndarray]:
+        """Correct image skew/rotation"""
+        try:
+            # Create a binary image
+            _, binary = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            
+            # Find all white pixels
+            coords = np.column_stack(np.where(binary > 0))
+            
+            # Find minimum area rectangle
+            angle = cv2.minAreaRect(coords)[-1]
+            
+            # Correct the angle
+            if angle < -45:
+                angle = -(90 + angle)
+            else:
+                angle = -angle
+                
+            # Skip if angle is too small
+            if abs(angle) < 0.5:
+                return None
+                
+            # Rotate the image
+            (h, w) = image.shape[:2]
+            center = (w // 2, h // 2)
+            M = cv2.getRotationMatrix2D(center, angle, 1.0)
+            rotated = cv2.warpAffine(image, M, (w, h), 
+                                   flags=cv2.INTER_CUBIC, 
+                                   borderMode=cv2.BORDER_REPLICATE)
+            
+            return rotated
+            
+        except Exception as e:
+            logger.warning(f"Deskew failed: {e}")
+            return None
     
-    # Check each pattern
-    for pattern in total_patterns:
-        matches = re.search(pattern, text, re.IGNORECASE)
-        if matches:
-            try:
-                amount_str = matches.group(1).replace(',', '')
-                return float(amount_str)
-            except (ValueError, IndexError):
-                continue
-    
-    # If no matches, try to find the last number that appears after "total" or similar words
-    last_amount = None
-    for line in text.split('\n'):
-        if re.search(r'total|amount|balance|sum|due', line, re.IGNORECASE):
-            # Find all numbers in this line
-            amounts = re.findall(r'[\$£€]?\s*([\d,]+\.\d{2})', line)
-            if amounts:
+    def perform_ocr(self, preprocessed_images: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Perform OCR with multiple configurations on preprocessed images
+        
+        Returns:
+            List of OCR results with confidence scores
+        """
+        results = []
+        
+        # Different Tesseract configurations to try
+        configs = [
+            ('--oem 3 --psm 4', 'single_column'),      # Assume single column
+            ('--oem 3 --psm 6', 'uniform_block'),      # Uniform block of text
+            ('--oem 3 --psm 3', 'automatic'),          # Fully automatic
+            ('--oem 1 --psm 4', 'legacy_single'),      # Legacy engine
+            ('--oem 3 --psm 11', 'sparse_text'),       # Sparse text
+        ]
+        
+        for prep_result in preprocessed_images:
+            image = prep_result['image']
+            pil_image = Image.fromarray(image)
+            
+            for config, config_name in configs:
                 try:
-                    last_amount = float(amounts[-1].replace(',', ''))
+                    # Get text and confidence data
+                    text = pytesseract.image_to_string(pil_image, config=config)
+                    data = pytesseract.image_to_data(pil_image, config=config, 
+                                                    output_type=pytesseract.Output.DICT)
+                    
+                    # Calculate average confidence (excluding -1 values)
+                    confidences = [float(conf) for conf in data['conf'] if int(conf) > 0]
+                    avg_confidence = sum(confidences) / len(confidences) if confidences else 0
+                    
+                    # Calculate text quality score
+                    quality_score = self._calculate_text_quality(text)
+                    
+                    results.append({
+                        'text': text,
+                        'method': prep_result['method'],
+                        'config': config_name,
+                        'avg_confidence': avg_confidence,
+                        'quality_score': quality_score,
+                        'combined_score': avg_confidence * quality_score,
+                        'data': data
+                    })
+                    
+                except Exception as e:
+                    logger.warning(f"OCR failed for {prep_result['method']} with {config_name}: {e}")
+                    continue
+        
+        return results
+    
+    def _calculate_text_quality(self, text: str) -> float:
+        """Calculate quality score based on text characteristics"""
+        if not text:
+            return 0.0
+            
+        score = 1.0
+        
+        # Check for receipt-like patterns
+        patterns = {
+            'currency': r'\$\d+\.\d{2}',
+            'date': r'\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4}',
+            'receipt_keywords': r'(?i)(total|subtotal|tax|receipt|invoice|price|amount)',
+            'store_indicators': r'(?i)(store|shop|restaurant|market|pharmacy)',
+        }
+        
+        for pattern_name, pattern in patterns.items():
+            if re.search(pattern, text):
+                score *= 1.2
+        
+        # Penalize for too many special characters or numbers only
+        alnum_ratio = sum(c.isalnum() for c in text) / len(text) if text else 0
+        if alnum_ratio < 0.3:
+            score *= 0.5
+        
+        # Reward for reasonable line count
+        lines = [line for line in text.split('\n') if line.strip()]
+        if 5 <= len(lines) <= 100:
+            score *= 1.1
+        
+        return min(score, 2.0)  # Cap at 2.0
+    
+    def select_best_ocr_result(self, results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Select the best OCR result based on combined scoring"""
+        if not results:
+            return {'text': '', 'method': 'none', 'config': 'none'}
+        
+        # Sort by combined score
+        sorted_results = sorted(results, key=lambda x: x['combined_score'], reverse=True)
+        
+        # Log top 3 results for debugging
+        for i, result in enumerate(sorted_results[:3]):
+            logger.info(f"OCR Result {i+1}: method={result['method']}, "
+                       f"config={result['config']}, score={result['combined_score']:.2f}")
+        
+        return sorted_results[0]
+    
+    def extract_structured_data(self, text: str) -> Dict[str, Any]:
+        """Extract structured information from OCR text"""
+        return {
+            'store_name': self._extract_store_name(text),
+            'total_amount': self._extract_total_amount(text),
+            'purchase_date': self._extract_purchase_date(text),
+            'items': self._extract_items(text),
+            'tax_amount': self._extract_tax_amount(text),
+            'subtotal': self._extract_subtotal(text)
+        }
+    
+    def _extract_store_name(self, text: str) -> Optional[str]:
+        """Extract store name with improved heuristics"""
+        lines = [line.strip() for line in text.split('\n') if line.strip()]
+        
+        if not lines:
+            return None
+        
+        # Check first 5 lines for store name
+        for i, line in enumerate(lines[:5]):
+            # Skip common receipt headers
+            skip_patterns = [
+                r'^\d+$',  # Just numbers
+                r'^\W+$',  # Just special characters
+                r'(?i)^(receipt|invoice|bill|order)$',
+                r'\d{1,2}[:/\-]\d{1,2}',  # Time patterns
+                r'\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4}',  # Date patterns
+            ]
+            
+            if any(re.search(pattern, line) for pattern in skip_patterns):
+                continue
+            
+            # Positive indicators for store names
+            if len(line) > 3 and len(line) < 50:
+                # Clean up the line
+                cleaned = re.sub(r'[^\w\s\-&\']', ' ', line).strip()
+                if cleaned and len(cleaned.split()) <= 5:  # Reasonable word count
+                    return cleaned
+        
+        return None
+    
+    def _extract_total_amount(self, text: str) -> Optional[float]:
+        """Extract total amount with multiple pattern matching"""
+        # Comprehensive patterns for total detection
+        patterns = [
+            (r'(?i)(?:total|tot|balance\s+due|amount\s+due)[\s:]*\$?\s*([\d,]+\.?\d{0,2})', 1.0),
+            (r'(?i)(?:grand\s+total|g\.?\s*total)[\s:]*\$?\s*([\d,]+\.?\d{0,2})', 1.0),
+            (r'\$\s*([\d,]+\.\d{2})(?=\s*(?:total|tot))', 0.9),
+            (r'(?i)(?:pay|due)[\s:]*\$?\s*([\d,]+\.?\d{0,2})', 0.8),
+            (r'(?i)(?:sale|sales)[\s:]*\$?\s*([\d,]+\.?\d{0,2})', 0.7),
+        ]
+        
+        candidates = []
+        
+        for pattern, confidence in patterns:
+            matches = re.finditer(pattern, text)
+            for match in matches:
+                try:
+                    amount = float(match.group(1).replace(',', ''))
+                    candidates.append((amount, confidence))
                 except ValueError:
                     continue
-    
-    if last_amount:
-        return last_amount
-    
-    # If we still can't find a specific total, look for dollar amounts
-    # and take the largest one as a fallback
-    dollar_amounts = re.findall(r'[\$£€]?\s*([\d,]+\.\d{2})', text)
-    if dollar_amounts:
-        try:
-            amounts = [float(amount.replace(',', '')) for amount in dollar_amounts]
-            return max(amounts)
-        except ValueError:
-            pass
-    
-    return None
-
-def extract_purchase_date(text):
-    """Extract purchase date with improved patterns and normalize to ISO format"""
-    # Common date formats
-    date_patterns = [
-        r'(\d{1,2})[/\-\.](\d{1,2})[/\-\.](\d{2,4})',  # MM/DD/YYYY or DD/MM/YYYY
-        r'(\d{4})[/\-\.](\d{1,2})[/\-\.](\d{1,2})',    # YYYY/MM/DD
-        r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* (\d{1,2}),? (\d{4})',  # Month DD, YYYY
-        r'(\d{1,2}) (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* (\d{4})',     # DD Month YYYY
-        r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[.\-\s]+(\d{1,2})[.\-\s]+(\d{4})'  # Month DD YYYY
-    ]
-    
-    # Date-related keywords to look for
-    date_keywords = [
-        'date:', 'date', 'receipt date:', 'receipt date', 
-        'purchase date:', 'purchase date', 'transaction date:',
-        'transaction date', 'order date:', 'order date'
-    ]
-    
-    # First try to find lines with date keywords
-    date_lines = []
-    for line in text.split('\n'):
-        if any(keyword.lower() in line.lower() for keyword in date_keywords):
-            date_lines.append(line)
-    
-    # If no specific date lines found, use all lines
-    if not date_lines:
-        date_lines = text.split('\n')
-    
-    # Try to extract dates from date-specific lines first
-    for line in date_lines:
-        for pattern in date_patterns:
-            match = re.search(pattern, line, re.IGNORECASE)
-            if match:
-                date_str = match.group(0)
-                iso_date = normalize_date(date_str)
-                return iso_date if iso_date else date_str
-    
-    # If that fails, check the entire text
-    for pattern in date_patterns:
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            date_str = match.group(0)
-            iso_date = normalize_date(date_str)
-            return iso_date if iso_date else date_str
-    
-    return None
-
-def normalize_date(date_str):
-    """Convert various date formats to ISO format (YYYY-MM-DD)"""
-    try:
-        # Try to identify the format
-        if re.match(r'\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{4}', date_str):
-            # DD/MM/YYYY or MM/DD/YYYY format
-            parts = re.split(r'[/\-\.]', date_str)
-            
-            # Check which is more likely (DD/MM or MM/DD)
-            day, month = int(parts[0]), int(parts[1])
-            
-            # Simple heuristic: if first number > 12, it's likely DD/MM
-            if day > 12:
-                # It's DD/MM/YYYY
-                return f"{parts[2]}-{parts[1]:0>2}-{parts[0]:0>2}"
-            else:
-                # Try to guess based on region (default to MM/DD/YYYY for US)
-                # You might want to make this configurable
-                return f"{parts[2]}-{parts[0]:0>2}-{parts[1]:0>2}"
-                
-        elif re.match(r'\d{4}[/\-\.]\d{1,2}[/\-\.]\d{1,2}', date_str):
-            # YYYY/MM/DD format
-            parts = re.split(r'[/\-\.]', date_str)
-            return f"{parts[0]}-{parts[1]:0>2}-{parts[2]:0>2}"
-            
-        elif re.match(r'[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4}', date_str):
-            # Month DD, YYYY format
-            from datetime import datetime
-            return datetime.strptime(date_str, "%B %d, %Y").strftime("%Y-%m-%d")
         
-        # Add more formats as needed
+        if candidates:
+            # Sort by confidence and amount (larger amounts more likely to be total)
+            candidates.sort(key=lambda x: (x[1], x[0]), reverse=True)
+            return candidates[0][0]
         
-        return None
-    except Exception as e:
-        logger.warning(f"Failed to normalize date '{date_str}': {e}")
-        return None
-
-def extract_items(text):
-    """
-    Extract list of items with prices - improved version
-    Handles different receipt layouts and formats
-    """
-    lines = text.split('\n')
-    items = []
-    in_items_section = False
-    
-    # Skip words often found in headers/footers
-    skip_keywords = ['receipt', 'invoice', 'order', 'tel:', 'phone:', 'address:',
-                    'cashier:', 'register:', 'terminal:', 'customer:', 'thank you',
-                    'date:', 'time:', 'subtotal', 'tax', 'total']
-    
-    # Words that might indicate start of items section
-    item_section_starts = ['item', 'description', 'qty', 'price', 'amount']
-    
-    # Words that might indicate end of items section
-    item_section_ends = ['subtotal', 'sub-total', 'sub total', 'total', 
-                        'tax', 'balance', 'amount due', 'payment']
-    
-    for i, line in enumerate(lines):
-        line = line.strip()
-        if not line:
-            continue
-            
-        # Check if this line indicates start of items section
-        if any(keyword.lower() in line.lower() for keyword in item_section_starts) and not in_items_section:
-            in_items_section = True
-            continue
-            
-        # Check if this line indicates end of items section
-        if any(keyword.lower() in line.lower() for keyword in item_section_ends) and in_items_section:
-            in_items_section = False
-            continue
-        
-        # If we haven't identified an items section yet, consider all lines
-        # until we find an end marker or until the end of the receipt
-        if not in_items_section and i > 5:  # Skip first few lines (usually header)
-            # Look for price pattern at end of line as a heuristic for item lines
-            price_match = re.search(r'.*?[\$£€]?\s*(\d+[\.,]\d{2})\s*$', line)
-            if price_match:
-                in_items_section = True
-            else:
+        # Fallback: Find largest currency amount
+        currency_pattern = r'\$?\s*([\d,]+\.\d{2})'
+        amounts = []
+        for match in re.finditer(currency_pattern, text):
+            try:
+                amount = float(match.group(1).replace(',', ''))
+                amounts.append(amount)
+            except ValueError:
                 continue
-                
-        # Skip lines that are likely headers or footers
-        if any(keyword in line.lower() for keyword in skip_keywords):
-            continue
         
-        # Look for price pattern at end of line
-        price_match = re.search(r'.*?[\$£€]?\s*(\d+[\.,]\d{2})\s*$', line)
-        if not price_match:
-            continue
-            
-        price_str = price_match.group(1).replace(',', '.')
-        try:
-            price = float(price_str)
-        except ValueError:
-            continue
-        
-        # Extract item name by removing the price part
-        item_name = line[:line.rfind(price_str)].strip()
-        item_name = re.sub(r'[\$£€]', '', item_name).strip()
-        
-        # Skip if it looks like a total, subtotal, tax, etc.
-        skip_item_keywords = ['total', 'subtotal', 'tax', 'change', 'cash', 'credit', 
-                             'debit', 'balance', 'due', 'payment', 'tender']
-                             
-        if any(keyword in item_name.lower() for keyword in skip_item_keywords):
-            continue
-            
-        # Skip if the item name is very short (likely not a real item)
-        if len(item_name) < 3:
-            continue
-            
-        # Try to extract quantity if present
-        qty = 1
-        qty_match = re.search(r'(\d+)\s*[xX]\s*', item_name)
-        if qty_match:
-            try:
-                qty = int(qty_match.group(1))
-                # Remove the quantity part from the item name
-                item_name = re.sub(r'^\d+\s*[xX]\s*', '', item_name)
-            except ValueError:
-                pass
-        
-        # Also look for quantity pattern: "3 @ $1.99"
-        qty_price_match = re.search(r'(\d+)\s*@\s*[\$£€]?\s*(\d+[\.,]\d{2})', item_name)
-        if qty_price_match:
-            try:
-                qty = int(qty_price_match.group(1))
-                unit_price = float(qty_price_match.group(2).replace(',', '.'))
-                # Remove the "qty @ price" part from item name
-                item_name = re.sub(r'\d+\s*@\s*[\$£€]?\s*\d+[\.,]\d{2}', '', item_name).strip()
-                # Recalculate price if needed
-                if abs(price - (qty * unit_price)) < 0.01:
-                    # Price matches quantity × unit price
-                    price = unit_price
-            except ValueError:
-                pass
-                
-        items.append({
-            "name": item_name,
-            "price": price,
-            "quantity": qty
-        })
+        return max(amounts) if amounts else None
     
-    return items
-
-def process_receipt(image_data):
-    """
-    Enhanced process receipt function with better error handling
-    
-    Args:
-        image_data: Either a file path, bytes object, or base64 encoded string
+    def _extract_tax_amount(self, text: str) -> Optional[float]:
+        """Extract tax amount"""
+        patterns = [
+            r'(?i)(?:tax|hst|gst|vat)[\s:]*\$?\s*([\d,]+\.?\d{0,2})',
+            r'(?i)(?:sales\s+tax)[\s:]*\$?\s*([\d,]+\.?\d{0,2})',
+        ]
         
-    Returns:
-        dict: Extracted receipt information
-    """
-    try:
-        # Handle different input types
-        if isinstance(image_data, str):
-            # Try to treat it as a file path first
-            try:
-                # Open the file to see if it exists and can be read
-                with open(image_data, 'rb') as f:
-                    image_bytes = f.read()
-                logger.info(f"Successfully read image from file: {image_data}")
-                return process_receipt_from_bytes(image_bytes)
-            except (FileNotFoundError, IOError) as e:
-                logger.warning(f"Could not open as file: {e}, trying other formats")
-                
-                # Not a file, try other formats
-                if image_data.startswith('data:image/'):
-                    # It's a data URL
-                    logger.info("Processing image from data URL")
-                    _, encoded = image_data.split(',', 1)
-                    image_bytes = base64.b64decode(encoded)
-                    return process_receipt_from_bytes(image_bytes)
-                elif image_data.startswith('s3://'):
-                    # For S3 URIs
-                    logger.error("S3 URIs not implemented in this version")
-                    raise NotImplementedError("S3 URI processing not implemented")
-                else:
-                    # Try base64 decode as last resort
-                    logger.info("Trying as base64 string")
-                    try:
-                        image_bytes = base64.b64decode(image_data)
-                        return process_receipt_from_bytes(image_bytes)
-                    except Exception as e:
-                        logger.error(f"Error decoding as base64: {e}")
-                        raise ValueError(f"Could not process input as file path or base64: {e}")
+        for pattern in patterns:
+            match = re.search(pattern, text)
+            if match:
+                try:
+                    return float(match.group(1).replace(',', ''))
+                except ValueError:
+                    continue
+        
+        return None
+    
+    def _extract_subtotal(self, text: str) -> Optional[float]:
+        """Extract subtotal amount"""
+        patterns = [
+            r'(?i)(?:subtotal|sub\s*total|sub\s*tot)[\s:]*\$?\s*([\d,]+\.?\d{0,2})',
+            r'(?i)(?:total\s+before\s+tax)[\s:]*\$?\s*([\d,]+\.?\d{0,2})',
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, text)
+            if match:
+                try:
+                    return float(match.group(1).replace(',', ''))
+                except ValueError:
+                    continue
+        
+        return None
+    
+    def _extract_purchase_date(self, text: str) -> Optional[str]:
+        """Extract and normalize purchase date"""
+        # Date patterns in order of preference
+        patterns = [
+            (r'(\d{1,2})[/\-](\d{1,2})[/\-](\d{4})', 'MDY'),  # MM/DD/YYYY
+            (r'(\d{4})[/\-](\d{1,2})[/\-](\d{1,2})', 'YMD'),  # YYYY/MM/DD
+            (r'(\d{1,2})[/\-](\d{1,2})[/\-](\d{2})', 'MDY'),   # MM/DD/YY
+            (r'(\d{1,2})\.(\d{1,2})\.(\d{4})', 'DMY'),         # DD.MM.YYYY
+            (r'([A-Za-z]{3,9})\s+(\d{1,2}),?\s+(\d{4})', 'MDY'), # Jan 15, 2024
+        ]
+        
+        for pattern, format_type in patterns:
+            match = re.search(pattern, text)
+            if match:
+                try:
+                    if format_type == 'MDY':
+                        if len(match.group(3)) == 2:
+                            year = 2000 + int(match.group(3))
+                        else:
+                            year = int(match.group(3))
+                        month = int(match.group(1))
+                        day = int(match.group(2))
+                    elif format_type == 'YMD':
+                        year = int(match.group(1))
+                        month = int(match.group(2))
+                        day = int(match.group(3))
+                    elif format_type == 'DMY':
+                        day = int(match.group(1))
+                        month = int(match.group(2))
+                        year = int(match.group(3))
+                    
+                    # Validate date
+                    if 1 <= month <= 12 and 1 <= day <= 31:
+                        date = datetime(year, month, day)
+                        return date.strftime('%Y-%m-%d')
+                        
+                except (ValueError, AttributeError):
+                    continue
+        
+        return None
+    
+    def _extract_items(self, text: str) -> List[Dict[str, Any]]:
+        """Extract line items with improved parsing"""
+        lines = text.split('\n')
+        items = []
+        
+        # Patterns for item lines
+        item_patterns = [
+            # Item name followed by price
+            r'^(.+?)\s+\$?\s*(\d+\.?\d{0,2})\s*$',
+            # Item with quantity: "2 x Item $5.99" or "Item x2 $5.99"
+            r'^(\d+)\s*[xX]\s*(.+?)\s+\$?\s*(\d+\.?\d{0,2})\s*$',
+            r'^(.+?)\s*[xX]\s*(\d+)\s+\$?\s*(\d+\.?\d{0,2})\s*$',
+            # Item with @ price: "Item 2 @ $3.00"
+            r'^(.+?)\s+(\d+)\s*@\s*\$?\s*(\d+\.?\d{0,2})\s*$',
+        ]
+        
+        # Skip patterns
+        skip_keywords = [
+            'total', 'subtotal', 'tax', 'balance', 'change', 'cash',
+            'credit', 'debit', 'payment', 'thank you', 'receipt'
+        ]
+        
+        for line in lines:
+            line = line.strip()
+            if not line or len(line) < 3:
+                continue
+            
+            # Skip lines with total/tax keywords
+            if any(keyword in line.lower() for keyword in skip_keywords):
+                continue
+            
+            # Try to match item patterns
+            for pattern in item_patterns:
+                match = re.match(pattern, line)
+                if match:
+                    groups = match.groups()
+                    
+                    if len(groups) == 2:  # Simple item + price
+                        item_name = groups[0].strip()
+                        try:
+                            price = float(groups[1])
+                            items.append({
+                                'name': item_name,
+                                'price': price,
+                                'quantity': 1
+                            })
+                        except ValueError:
+                            continue
+                    
+                    elif len(groups) == 3:  # Item with quantity
+                        try:
+                            # Determine order based on pattern
+                            if pattern.startswith(r'^(\d+)'):
+                                quantity = int(groups[0])
+                                item_name = groups[1].strip()
+                                price = float(groups[2])
+                            else:
+                                item_name = groups[0].strip()
+                                quantity = int(groups[1])
+                                price = float(groups[2])
+                            
+                            items.append({
+                                'name': item_name,
+                                'price': price / quantity,  # Unit price
+                                'quantity': quantity
+                            })
+                        except ValueError:
+                            continue
+                    
+                    break
+        
+        return items
+    
+    def calculate_confidence_scores(self, extracted_data: Dict[str, Any], 
+                                  ocr_result: Dict[str, Any]) -> Dict[str, float]:
+        """Calculate confidence scores for each extracted field"""
+        scores = {}
+        
+        # OCR confidence
+        scores['ocr_quality'] = min(ocr_result.get('avg_confidence', 0) / 100, 1.0)
+        
+        # Store name confidence
+        if extracted_data['store_name']:
+            scores['store_name'] = 0.8 if len(extracted_data['store_name']) > 2 else 0.3
         else:
-            # Assume it's already bytes
-            logger.info("Processing image from bytes object")
-            return process_receipt_from_bytes(image_data)
+            scores['store_name'] = 0.0
+        
+        # Total amount confidence
+        if extracted_data['total_amount'] is not None:
+            scores['total_amount'] = 0.9
+            # Boost if subtotal + tax approximately equals total
+            if extracted_data['subtotal'] and extracted_data['tax_amount']:
+                calculated_total = extracted_data['subtotal'] + extracted_data['tax_amount']
+                if abs(calculated_total - extracted_data['total_amount']) < 0.10:
+                    scores['total_amount'] = 1.0
+        else:
+            scores['total_amount'] = 0.0
+        
+        # Date confidence
+        if extracted_data['purchase_date']:
+            scores['purchase_date'] = 0.85
+        else:
+            scores['purchase_date'] = 0.0
+        
+        # Items confidence
+        if extracted_data['items']:
+            # Check if item prices sum close to subtotal/total
+            item_sum = sum(item['price'] * item['quantity'] for item in extracted_data['items'])
             
-    except Exception as e:
-        logger.error(f"Error processing receipt: {e}", exc_info=True)
-        return {
-            "error": str(e),
-            "extracted_text": None,
-            "store_name": None,
-            "total_amount": None,
-            "purchase_date": None,
-            "items": []
-        }
-
-def process_receipt_from_file(file_path):
-    """Process receipt directly from a file path with enhanced processing"""
-    try:
-        with open(file_path, 'rb') as f:
-            image_bytes = f.read()
-        return process_receipt_from_bytes(image_bytes)
-    except Exception as e:
-        logger.error(f"Error processing receipt from file: {e}", exc_info=True)
-        raise
-
-def process_receipt_from_bytes(image_bytes):
-    """Process receipt from bytes data using enhanced extraction"""
-    try:
-        # Preprocess the image using multiple techniques
-        preprocessed_images = preprocess_image(image_bytes)
+            if extracted_data['subtotal']:
+                diff_ratio = abs(item_sum - extracted_data['subtotal']) / extracted_data['subtotal']
+                scores['items'] = max(0, 1 - diff_ratio)
+            elif extracted_data['total_amount']:
+                diff_ratio = abs(item_sum - extracted_data['total_amount']) / extracted_data['total_amount']
+                scores['items'] = max(0, 0.8 - diff_ratio)
+            else:
+                scores['items'] = 0.5 if len(extracted_data['items']) > 0 else 0.0
+        else:
+            scores['items'] = 0.0
         
-        if not preprocessed_images:
-            raise ValueError("Image preprocessing failed")
+        return scores
+    
+    def suggest_category(self, extracted_data: Dict[str, Any]) -> Optional[str]:
+        """Suggest a category based on store name and items"""
+        store_name = (extracted_data.get('store_name') or '').lower()
+        items_text = ' '.join([item['name'].lower() for item in extracted_data.get('items', [])])
+        combined_text = f"{store_name} {items_text}"
         
-        # Extract text using multiple OCR configurations
-        extracted_text = extract_text(preprocessed_images)
-        
-        if not extracted_text:
-            logger.warning("No text extracted from image")
-            return {
-                "error": "No text could be extracted from the image",
-                "extracted_text": "",
-                "store_name": None,
-                "total_amount": None,
-                "purchase_date": None,
-                "items": []
-            }
-        
-        logger.info(f"Extracted text (first 200 chars): {extracted_text[:200]}")
-        
-        # Extract structured data
-        store_name = extract_store_name(extracted_text)
-        total_amount = extract_total_amount(extracted_text)
-        purchase_date = extract_purchase_date(extracted_text)
-        items = extract_items(extracted_text)
-        
-        # Return structured results
-        result = {
-            "extracted_text": extracted_text,
-            "store_name": store_name,
-            "total_amount": total_amount,
-            "purchase_date": purchase_date,
-            "items": items
+        # Category keywords mapping
+        category_keywords = {
+            'Groceries': ['grocery', 'market', 'mart', 'foods', 'produce', 'meat', 'dairy', 'bread'],
+            'Restaurants': ['restaurant', 'cafe', 'coffee', 'pizza', 'burger', 'diner', 'grill'],
+            'Gas & Fuel': ['gas', 'fuel', 'petrol', 'station', 'shell', 'exxon', 'chevron'],
+            'Healthcare': ['pharmacy', 'drug', 'medical', 'clinic', 'hospital', 'cvs', 'walgreens'],
+            'Shopping': ['store', 'shop', 'retail', 'mall', 'fashion', 'clothing', 'department'],
+            'Entertainment': ['cinema', 'movie', 'theater', 'game', 'sport', 'ticket'],
+            'Transportation': ['uber', 'lyft', 'taxi', 'bus', 'train', 'subway', 'parking']
         }
         
-        logger.info(f"Receipt processing completed: {store_name}, {total_amount}, {purchase_date}")
+        # Score each category
+        category_scores = {}
+        for category, keywords in category_keywords.items():
+            score = sum(1 for keyword in keywords if keyword in combined_text)
+            if score > 0:
+                category_scores[category] = score
         
-        # Add a confidence score for the extraction
-        extraction_success = (
-            store_name != "Unknown Store" and 
-            total_amount is not None and
-            purchase_date is not None and
-            len(items) > 0
-        )
+        # Return highest scoring category
+        if category_scores:
+            return max(category_scores.items(), key=lambda x: x[1])[0]
         
-        result["extraction_confidence"] = "high" if extraction_success else "low"
-        
-        return result
-    except Exception as e:
-        logger.error(f"Error in process_receipt_from_bytes: {e}", exc_info=True)
+        return 'Other'
+    
+    def get_available_categories(self) -> List[str]:
+        """Return list of available categories"""
+        return self.categories
+    
+    def _create_error_response(self, error_message: str) -> Dict[str, Any]:
+        """Create a standardized error response"""
         return {
-            "error": str(e),
-            "extracted_text": "",
-            "store_name": None,
-            "total_amount": None,
-            "purchase_date": None,
-            "items": []
+            'success': False,
+            'error_message': error_message,
+            'extracted_text': '',
+            'store_name': None,
+            'total_amount': None,
+            'purchase_date': None,
+            'items': [],
+            'suggested_category': None,
+            'overall_confidence': 0.0,
+            'confidence_breakdown': {}
         }
