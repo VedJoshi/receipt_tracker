@@ -72,10 +72,11 @@
 
 /* Upload Section */
 .upload-section {
-    background-color: #f9f9f9;
+    background: white;
+    padding: 2rem;
     border-radius: 8px;
-    padding: 20px;
-    margin-bottom: 30px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    margin-bottom: 2rem;
 }
 
 .upload-section h2 {
@@ -84,8 +85,9 @@
 
 .upload-form {
     display: flex;
-    gap: 15px;
+    gap: 1rem;
     align-items: center;
+    flex-wrap: wrap;
 }
 
 .upload-form input[type="file"] {
@@ -97,23 +99,50 @@
 }
 
 .upload-button {
-    background-color: #4CAF50;
+    background: #2196F3;
     color: white;
     border: none;
-    padding: 12px 24px;
+    padding: 0.75rem 1.5rem;
     border-radius: 4px;
     cursor: pointer;
-    font-size: 16px;
-    transition: background-color 0.3s;
+    font-weight: 500;
+    transition: all 0.3s ease;
 }
 
 .upload-button:hover:not(:disabled) {
-    background-color: #45a049;
+    background: #1976D2;
 }
 
 .upload-button:disabled {
-    background-color: #cccccc;
+    background: #ccc;
     cursor: not-allowed;
+}
+
+.upload-button.processing {
+    background: #FF9800;
+    color: white;
+}
+
+.simple-loading {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 1rem;
+    color: #666;
+}
+
+.spinner {
+    width: 20px;
+    height: 20px;
+    border: 2px solid #f3f3f3;
+    border-top: 2px solid #2196F3;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
 }
 
 /* Error Message */

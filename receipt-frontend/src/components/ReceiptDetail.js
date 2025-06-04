@@ -222,6 +222,9 @@ function ReceiptDetail() {
     };
 
     // Image controls
+    const handleZoomIn = () => setImageZoom(prev => Math.min(prev + 0.25, 3));
+    const handleZoomOut = () => setImageZoom(prev => Math.max(prev - 0.25, 0.5));
+    const handleRotate = () => setImageRotation(prev => (prev + 90) % 360);
     const handleResetImage = () => {
         setImageZoom(1);
         setImageRotation(0);

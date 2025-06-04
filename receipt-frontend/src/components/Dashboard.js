@@ -3,7 +3,6 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import axios from 'axios';
 import { useAuth } from '../AuthContext';
 import './Dashboard.css';
-import LoadingSpinner from './LoadingSpinner';
 
 const API_URL = process.env.REACT_APP_API_GATEWAY_URL;
 
@@ -389,29 +388,31 @@ function Dashboard() {
                 </div>
             </div>
 
-            {/* Upload Section with Enhanced Loading */}
+            {/* Upload Section - Simplified */}
             <div className="upload-section">
                 <h2>Upload New Receipt</h2>
-                {uploading ? (
-                    <LoadingSpinner 
-                        stage="uploading"
-                        progress={75}
-                        fileName={file?.name}
-                        estimatedTime="30 seconds"
+                <form onSubmit={handleUpload} className="upload-form">
+                    <input
+                        id="receipt-upload-input"
+                        type="file"
+                        accept="image/*"
+                        onChange={handleFileChange}
+                        required
+                        disabled={uploading}
                     />
-                ) : (
-                    <form onSubmit={handleUpload} className="upload-form">
-                        <input
-                            id="receipt-upload-input"
-                            type="file"
-                            accept="image/*"
-                            onChange={handleFileChange}
-                            required
-                        />
-                        <button type="submit" disabled={uploading || !file} className="upload-button">
-                            {uploading ? 'Processing...' : 'Upload & Process'}
-                        </button>
-                    </form>
+                    <button 
+                        type="submit" 
+                        disabled={uploading || !file} 
+                        className={`upload-button ${uploading ? 'processing' : ''}`}
+                    >
+                        {uploading ? 'Processing...' : 'Upload & Process'}
+                    </button>
+                </form>
+                {uploading && (
+                    <div className="simple-loading">
+                        <div className="spinner"></div>
+                        <span>Processing your receipt...</span>
+                    </div>
                 )}
             </div>
 
