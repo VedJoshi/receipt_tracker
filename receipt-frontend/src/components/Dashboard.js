@@ -1,102 +1,178 @@
-// receipt-frontend/src/components/Dashboard.js
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { useAuth } from '../AuthContext';
-import { useNavigate } from 'react-router-dom';
+import './Dashboard.css';
 
 const API_URL = process.env.REACT_APP_API_GATEWAY_URL;
 
 function Dashboard() {
-    const [receipts, setReceipts] = useState([]);
-    const [file, setFile] = useState(null);
-    const [uploading, setUploading] = useState(false);
-    const [loadingReceipts, setLoadingReceipts] = useState(false);
-    const [error, setError] = useState('');
-    const { user, session, signOut } = useAuth();
     const navigate = useNavigate();
+    const { user, session, signOut } = useAuth();
+    
+    // State management
+    const [receipts, setReceipts] = useState([]);
+    const [filteredReceipts, setFilteredReceipts] = useState([]);
+    const [categories, setCategories] = useState([]);
+    const [loading, setLoading] = useState(false);
+    const [uploading, setUploading] = useState(false);
+    const [error, setError] = useState('');
+    const [file, setFile] = useState(null);
+    
+    // View and filter states
+    const [viewMode, setViewMode] = useState('cards'); // 'cards' or 'table'
+    const [searchTerm, setSearchTerm] = useState('');
+    const [selectedCategory, setSelectedCategory] = useState('');
+    const [sortBy, setSortBy] = useState('date-desc');
+    const [selectedReceipts, setSelectedReceipts] = useState([]);
+    const [showBulkActions, setShowBulkActions] = useState(false);
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    
+    // Statistics
+    const [stats, setStats] = useState({
+        totalReceipts: 0,
+        totalAmount: 0,
+        monthlyAmount: 0,
+        categoryCounts: {}
+    });
 
-    // --- Fetch Receipts ---
+    // Fetch data on mount
+    useEffect(() => {
+        fetchReceipts();
+        fetchCategories();
+    }, [session]);
+
+    // Update filtered receipts when filters change
+    useEffect(() => {
+        applyFilters();
+    }, [receipts, searchTerm, selectedCategory, sortBy]);
+
+    // Calculate statistics
+    useEffect(() => {
+        calculateStats();
+    }, [receipts]);
+
+    // Toggle bulk actions visibility
+    useEffect(() => {
+        setShowBulkActions(selectedReceipts.length > 0);
+    }, [selectedReceipts]);
+
     const fetchReceipts = async () => {
         setError('');
-        setLoadingReceipts(true);
-        if (!session) {
-            setError("Not authenticated");
-            setLoadingReceipts(false);
-            return;
-        }
+        setLoading(true);
+        
         try {
-            console.log('Using API URL:', `${API_URL}/receipts`);
-            console.log('Auth token:', session.access_token.substring(0, 10) + '...');
-            
             const response = await axios.get(`${API_URL}/receipts`, {
-                headers: {
-                    Authorization: `Bearer ${session.access_token}`,
-                },
+                headers: { Authorization: `Bearer ${session.access_token}` }
             });
-            console.log('Receipt fetch response:', response.data);
             setReceipts(response.data);
         } catch (err) {
-            console.error("Error fetching receipts:", err);
-            
-            // Improved error handling
-            if (err.response) {
-                // The request was made and the server responded with a status code
-                console.error("Response data:", err.response.data);
-                console.error("Response status:", err.response.status);
-                console.error("Response headers:", err.response.headers);
-                setError(`Failed to fetch receipts: ${err.response.status} - ${JSON.stringify(err.response.data)}`);
-            } else if (err.request) {
-                // Request was made but no response received (likely CORS issue)
-                console.error("No response received:", err.request);
-                setError("CORS error or no response from server. Check network tab for details.");
-            } else {
-                // Something happened in setting up the request
-                console.error("Error message:", err.message);
-                setError(`Failed to fetch receipts: ${err.message}`);
-            }
-            
+            console.error('Error fetching receipts:', err);
+            setError('Failed to fetch receipts');
             if (err.response?.status === 401) {
                 signOut();
                 navigate('/login');
             }
         } finally {
-            setLoadingReceipts(false);
+            setLoading(false);
         }
     };
 
-    // Fetch receipts on component mount and when session changes
-    useEffect(() => {
-        if (session) {
-            fetchReceipts();
-        } else {
-            setReceipts([]);
+    const fetchCategories = async () => {
+        try {
+            const response = await axios.get(`${API_URL}/categories`, {
+                headers: { Authorization: `Bearer ${session.access_token}` }
+            });
+            setCategories(response.data);
+        } catch (err) {
+            console.error('Error fetching categories:', err);
         }
-    }, [session]); // eslint-disable-line react-hooks/exhaustive-deps
+    };
 
-    // --- Handle File Upload ---
+    const applyFilters = () => {
+        let filtered = [...receipts];
+
+        // Search filter
+        if (searchTerm) {
+            filtered = filtered.filter(receipt => 
+                receipt.store_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                receipt.items?.some(item => 
+                    item.name.toLowerCase().includes(searchTerm.toLowerCase())
+                ) ||
+                receipt.extracted_text?.toLowerCase().includes(searchTerm.toLowerCase())
+            );
+        }
+
+        // Category filter
+        if (selectedCategory) {
+            filtered = filtered.filter(receipt => receipt.category === selectedCategory);
+        }
+
+        // Sort
+        filtered.sort((a, b) => {
+            switch (sortBy) {
+                case 'date-desc':
+                    return new Date(b.created_at) - new Date(a.created_at);
+                case 'date-asc':
+                    return new Date(a.created_at) - new Date(b.created_at);
+                case 'amount-desc':
+                    return (b.total_amount || 0) - (a.total_amount || 0);
+                case 'amount-asc':
+                    return (a.total_amount || 0) - (b.total_amount || 0);
+                case 'store':
+                    return (a.store_name || '').localeCompare(b.store_name || '');
+                default:
+                    return 0;
+            }
+        });
+
+        setFilteredReceipts(filtered);
+    };
+
+    const calculateStats = () => {
+        const total = receipts.reduce((sum, r) => sum + (r.total_amount || 0), 0);
+        
+        // Calculate monthly amount (current month)
+        const currentMonth = new Date().getMonth();
+        const currentYear = new Date().getFullYear();
+        const monthlyReceipts = receipts.filter(r => {
+            const date = new Date(r.created_at);
+            return date.getMonth() === currentMonth && date.getFullYear() === currentYear;
+        });
+        const monthly = monthlyReceipts.reduce((sum, r) => sum + (r.total_amount || 0), 0);
+
+        // Category counts
+        const categoryCounts = {};
+        receipts.forEach(r => {
+            const cat = r.category || 'Uncategorized';
+            categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
+        });
+
+        setStats({
+            totalReceipts: receipts.length,
+            totalAmount: total,
+            monthlyAmount: monthly,
+            categoryCounts
+        });
+    };
+
+    // File upload handlers
     const handleFileChange = (e) => {
         setFile(e.target.files[0]);
     };
 
     const handleUpload = async (e) => {
         e.preventDefault();
-        if (!file || !session) {
-            setError("Please select a file and ensure you are logged in.");
-            return;
-        }
+        if (!file) return;
+
         setError('');
         setUploading(true);
 
         try {
-            console.log('Uploading file:', file.name, file.type, file.size);
-            
-            // Convert file to base64
             const reader = new FileReader();
             reader.onloadend = async () => {
                 try {
                     const base64data = reader.result;
-                    
-                    // Send to API Gateway endpoint
                     const response = await axios.post(
                         `${API_URL}/upload`,
                         { image: base64data },
@@ -105,285 +181,415 @@ function Dashboard() {
                                 'Content-Type': 'application/json',
                                 'Authorization': `Bearer ${session.access_token}`
                             },
-                            timeout: 60000 // 60 second timeout for OCR processing
+                            timeout: 60000
                         }
                     );
                     
-                    console.log('Upload successful:', response.data);
                     setFile(null);
                     document.getElementById('receipt-upload-input').value = '';
                     
-                    // Show success message
                     if (response.data.receipt?.processing_status === 'failed') {
                         setError('Receipt uploaded but OCR processing failed. You can edit it manually.');
                     }
                     
                     fetchReceipts();
                 } catch (err) {
-                    handleError(err);
-                } finally {
-                    setUploading(false);
+                    console.error('Upload error:', err);
+                    setError(err.response?.data?.message || 'Upload failed');
                 }
             };
             reader.readAsDataURL(file);
         } catch (err) {
-            handleError(err);
+            setError('Failed to read file');
+        } finally {
             setUploading(false);
         }
     };
 
-    // Helper function to handle errors
-    const handleError = (err) => {
-        console.error("Error uploading receipt:", err);
-        
-        if (err.response) {
-            console.error("Response data:", err.response.data);
-            console.error("Response status:", err.response.status);
-            setError(`Upload failed: ${err.response.status} - ${JSON.stringify(err.response.data)}`);
-        } else if (err.request) {
-            console.error("No response received:", err.request);
-            setError("Network error. Check your connection and try again.");
-        } else {
-            setError(`Upload failed: ${err.message}`);
-        }
-        
-        if (err.response?.status === 401) {
-            signOut();
-            navigate('/login');
+    // Receipt actions
+    const handleReceiptClick = (receiptId) => {
+        navigate(`/receipt/${receiptId}`);
+    };
+
+    const handleQuickCategoryChange = async (receiptId, category) => {
+        try {
+            await axios.put(
+                `${API_URL}/receipts/${receiptId}`,
+                { category },
+                {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${session.access_token}`
+                    }
+                }
+            );
+            
+            // Update local state
+            setReceipts(receipts.map(r => 
+                r.id === receiptId ? { ...r, category } : r
+            ));
+        } catch (err) {
+            console.error('Error updating category:', err);
+            setError('Failed to update category');
         }
     };
 
-    // --- Handle Logout ---
+    const handleSelectReceipt = (receiptId) => {
+        setSelectedReceipts(prev => 
+            prev.includes(receiptId) 
+                ? prev.filter(id => id !== receiptId)
+                : [...prev, receiptId]
+        );
+    };
+
+    const handleSelectAll = () => {
+        if (selectedReceipts.length === filteredReceipts.length) {
+            setSelectedReceipts([]);
+        } else {
+            setSelectedReceipts(filteredReceipts.map(r => r.id));
+        }
+    };
+
+    const handleBulkDelete = async () => {
+        try {
+            await Promise.all(
+                selectedReceipts.map(id =>
+                    axios.delete(`${API_URL}/receipts/${id}`, {
+                        headers: { Authorization: `Bearer ${session.access_token}` }
+                    })
+                )
+            );
+            
+            setSelectedReceipts([]);
+            fetchReceipts();
+        } catch (err) {
+            console.error('Error deleting receipts:', err);
+            setError('Failed to delete some receipts');
+        }
+        setShowDeleteConfirm(false);
+    };
+
+    const handleBulkCategorize = async (category) => {
+        try {
+            await Promise.all(
+                selectedReceipts.map(id =>
+                    axios.put(
+                        `${API_URL}/receipts/${id}`,
+                        { category },
+                        {
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${session.access_token}`
+                            }
+                        }
+                    )
+                )
+            );
+            
+            setSelectedReceipts([]);
+            fetchReceipts();
+        } catch (err) {
+            console.error('Error categorizing receipts:', err);
+            setError('Failed to categorize some receipts');
+        }
+    };
+
     const handleLogout = async () => {
         await signOut();
         navigate('/login');
     };
 
-    // Helper function to format currency
+    // Helper functions
     const formatCurrency = (amount) => {
         if (amount === null || amount === undefined) return 'N/A';
-        return `$${parseFloat(amount).toFixed(2)}`;
+        return `${parseFloat(amount).toFixed(2)}`;
     };
 
-    // Helper function to format date
     const formatDate = (dateString) => {
         if (!dateString) return 'N/A';
-        
-        // Handle different date formats
-        let formattedDate;
-        if (dateString.includes('/')) {
-            // MM/DD/YYYY format
-            const parts = dateString.split('/');
-            if (parts.length === 3) {
-                formattedDate = new Date(`${parts[2]}-${parts[0]}-${parts[1]}`);
-            } else {
-                return dateString; // Return as-is if not in expected format
-            }
-        } else {
-            // ISO or other format
-            formattedDate = new Date(dateString);
+        try {
+            return new Date(dateString).toLocaleDateString();
+        } catch {
+            return dateString;
         }
-        
-        // Check if date is valid
-        if (isNaN(formattedDate.getTime())) {
-            return dateString; // Return as-is if not a valid date
-        }
-        
-        return formattedDate.toLocaleDateString();
     };
 
-    // Helper function to get processing status indicator
-    const getStatusIndicator = (receipt) => {
+    const getStatusBadge = (receipt) => {
         if (receipt.processing_status === 'failed') {
-            return <span style={{ color: 'red', fontSize: '0.8rem' }}>⚠️ OCR Failed</span>;
+            return <span className="badge badge-error">OCR Failed</span>;
         }
         if (receipt.is_manually_edited) {
-            return <span style={{ color: 'blue', fontSize: '0.8rem' }}>✏️ Edited</span>;
+            return <span className="badge badge-edited">Edited</span>;
         }
         if (receipt.confidence_score && receipt.confidence_score < 0.7) {
-            return <span style={{ color: 'orange', fontSize: '0.8rem' }}>⚡ Low Confidence</span>;
+            return <span className="badge badge-warning">Low Confidence</span>;
         }
-        return <span style={{ color: 'green', fontSize: '0.8rem' }}>✅ Processed</span>;
+        return <span className="badge badge-success">Processed</span>;
     };
 
-    if (!user) {
-        return <p>Loading user or redirecting...</p>;
-    }
-
     return (
-        <div className="dashboard-container" style={{ maxWidth: '900px', margin: '0 auto', padding: '20px' }}>
-            <h2>Receipt Scanner Dashboard</h2>
-            <p>Welcome, {user.email}!</p>
-            <button 
-                onClick={handleLogout}
-                style={{ 
-                    backgroundColor: '#f44336', 
-                    color: 'white', 
-                    padding: '8px 16px', 
-                    border: 'none', 
-                    borderRadius: '4px',
-                    cursor: 'pointer' 
-                }}
-            >
-                Log Out
-            </button>
+        <div className="enhanced-dashboard">
+            {/* Header */}
+            <div className="dashboard-header">
+                <div>
+                    <h1>Receipt Scanner Dashboard</h1>
+                    <p>Welcome, {user?.email}</p>
+                </div>
+                <button onClick={handleLogout} className="logout-button">
+                    Log Out
+                </button>
+            </div>
 
-            <div style={{ margin: '30px 0', padding: '20px', backgroundColor: '#f9f9f9', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
-                <h3>Upload New Receipt</h3>
-                <form onSubmit={handleUpload} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                    <div>
-                        <input
-                            id="receipt-upload-input"
-                            type="file"
-                            accept="image/*"
-                            onChange={handleFileChange}
-                            required
-                            style={{ marginBottom: '10px' }}
-                        />
-                        <p style={{ fontSize: '0.8rem', color: '#666' }}>
-                            Upload a clear image of your receipt for best text extraction results
-                        </p>
-                    </div>
-                    <button 
-                        type="submit" 
-                        disabled={uploading || !file}
-                        style={{ 
-                            backgroundColor: '#4CAF50', 
-                            color: 'white', 
-                            padding: '10px', 
-                            border: 'none', 
-                            borderRadius: '4px',
-                            cursor: uploading || !file ? 'not-allowed' : 'pointer',
-                            opacity: uploading || !file ? 0.7 : 1
-                        }}
-                    >
-                        {uploading ? 'Processing Receipt...' : 'Upload & Process Receipt'}
+            {/* Statistics */}
+            <div className="stats-container">
+                <div className="stat-card">
+                    <h3>Total Receipts</h3>
+                    <p className="stat-value">{stats.totalReceipts}</p>
+                </div>
+                <div className="stat-card">
+                    <h3>Total Amount</h3>
+                    <p className="stat-value">{formatCurrency(stats.totalAmount)}</p>
+                </div>
+                <div className="stat-card">
+                    <h3>This Month</h3>
+                    <p className="stat-value">{formatCurrency(stats.monthlyAmount)}</p>
+                </div>
+                <div className="stat-card">
+                    <h3>Categories</h3>
+                    <p className="stat-value">{Object.keys(stats.categoryCounts).length}</p>
+                </div>
+            </div>
+
+            {/* Upload Section */}
+            <div className="upload-section">
+                <h2>Upload New Receipt</h2>
+                <form onSubmit={handleUpload} className="upload-form">
+                    <input
+                        id="receipt-upload-input"
+                        type="file"
+                        accept="image/*"
+                        onChange={handleFileChange}
+                        required
+                    />
+                    <button type="submit" disabled={uploading || !file} className="upload-button">
+                        {uploading ? 'Processing...' : 'Upload & Process'}
                     </button>
                 </form>
             </div>
 
             {error && (
-                <div style={{ color: 'red', padding: '10px', backgroundColor: '#ffebee', borderRadius: '4px', marginBottom: '20px' }}>
-                    Error: {error}
+                <div className="error-message">
+                    {error}
                 </div>
             )}
 
-            <h3>Your Receipts</h3>
-            {loadingReceipts && <p>Loading receipts...</p>}
-            {!loadingReceipts && receipts.length === 0 && <p>No receipts found. Upload your first receipt to get started!</p>}
-            
-            <div className="receipts-list">
-                {receipts.map((receipt) => (
-                    <div 
-                        key={receipt.id} 
-                        className="receipt-card"
-                        style={{ 
-                            marginBottom: '30px', 
-                            border: '1px solid #ddd', 
-                            borderRadius: '8px',
-                            padding: '20px',
-                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                        }}
+            {/* Filters and Controls */}
+            <div className="controls-section">
+                <div className="filters">
+                    <input
+                        type="text"
+                        placeholder="Search receipts..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="search-input"
+                    />
+                    
+                    <select
+                        value={selectedCategory}
+                        onChange={(e) => setSelectedCategory(e.target.value)}
+                        className="filter-select"
                     >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px' }}>
-                            <div>
-                                <h4 style={{ margin: '0 0 5px 0' }}>
-                                    {receipt.store_name || 'Unknown Store'}
-                                    {' '}
-                                    {getStatusIndicator(receipt)}
-                                </h4>
-                                <p style={{ margin: '0', color: '#666' }}>
-                                    <strong>Date:</strong> {formatDate(receipt.purchase_date)}
-                                </p>
-                                <p style={{ margin: '5px 0 0 0', color: '#666' }}>
-                                    <strong>Uploaded:</strong> {new Date(receipt.created_at).toLocaleString()}
-                                </p>
-                            </div>
-                            <div style={{ textAlign: 'right' }}>
-                                <p style={{ margin: '0', fontSize: '1.2rem', fontWeight: 'bold' }}>
-                                    {formatCurrency(receipt.total_amount)}
-                                </p>
-                                {receipt.confidence_score && (
-                                    <p style={{ margin: '5px 0 0 0', fontSize: '0.8rem', color: '#666' }}>
-                                        Confidence: {(receipt.confidence_score * 100).toFixed(0)}%
-                                    </p>
-                                )}
-                            </div>
-                        </div>
+                        <option value="">All Categories</option>
+                        {categories.map(cat => (
+                            <option key={cat.id} value={cat.name}>{cat.name}</option>
+                        ))}
+                    </select>
+                    
+                    <select
+                        value={sortBy}
+                        onChange={(e) => setSortBy(e.target.value)}
+                        className="filter-select"
+                    >
+                        <option value="date-desc">Newest First</option>
+                        <option value="date-asc">Oldest First</option>
+                        <option value="amount-desc">Highest Amount</option>
+                        <option value="amount-asc">Lowest Amount</option>
+                        <option value="store">Store Name</option>
+                    </select>
+                </div>
+                
+                <div className="view-controls">
+                    <button
+                        onClick={() => setViewMode('cards')}
+                        className={`view-button ${viewMode === 'cards' ? 'active' : ''}`}
+                    >
+                        Cards
+                    </button>
+                    <button
+                        onClick={() => setViewMode('table')}
+                        className={`view-button ${viewMode === 'table' ? 'active' : ''}`}
+                    >
+                        Table
+                    </button>
+                </div>
+            </div>
 
-                        <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
-                            {/* Receipt Image */}
-                            <div style={{ flex: '1 1 300px' }}>
-                                <h5>Receipt Image</h5>
-                                {receipt.presigned_url ? (
+            {/* Bulk Actions */}
+            {showBulkActions && (
+                <div className="bulk-actions">
+                    <span>{selectedReceipts.length} selected</span>
+                    <button onClick={() => setShowDeleteConfirm(true)} className="bulk-delete">
+                        Delete Selected
+                    </button>
+                    <select
+                        onChange={(e) => handleBulkCategorize(e.target.value)}
+                        className="bulk-categorize"
+                        defaultValue=""
+                    >
+                        <option value="" disabled>Categorize as...</option>
+                        {categories.map(cat => (
+                            <option key={cat.id} value={cat.name}>{cat.name}</option>
+                        ))}
+                    </select>
+                    <button onClick={() => setSelectedReceipts([])} className="clear-selection">
+                        Clear Selection
+                    </button>
+                </div>
+            )}
+
+            {/* Receipts Display */}
+            {loading ? (
+                <div className="loading">Loading receipts...</div>
+            ) : filteredReceipts.length === 0 ? (
+                <div className="no-receipts">
+                    {receipts.length === 0 
+                        ? "No receipts found. Upload your first receipt to get started!"
+                        : "No receipts match your filters."}
+                </div>
+            ) : viewMode === 'cards' ? (
+                <div className="receipts-grid">
+                    {filteredReceipts.map(receipt => (
+                        <div key={receipt.id} className="receipt-card">
+                            <div className="card-header">
+                                <input
+                                    type="checkbox"
+                                    checked={selectedReceipts.includes(receipt.id)}
+                                    onChange={() => handleSelectReceipt(receipt.id)}
+                                    onClick={(e) => e.stopPropagation()}
+                                />
+                                <h3 onClick={() => handleReceiptClick(receipt.id)}>
+                                    {receipt.store_name || 'Unknown Store'}
+                                </h3>
+                                {getStatusBadge(receipt)}
+                            </div>
+                            
+                            <div className="card-content" onClick={() => handleReceiptClick(receipt.id)}>
+                                <p className="receipt-date">{formatDate(receipt.purchase_date)}</p>
+                                <p className="receipt-amount">{formatCurrency(receipt.total_amount)}</p>
+                                
+                                {receipt.presigned_url && (
                                     <img 
                                         src={receipt.presigned_url} 
-                                        alt="Receipt" 
-                                        style={{ maxWidth: '100%', maxHeight: '300px', border: '1px solid #ddd' }} 
+                                        alt="Receipt thumbnail"
+                                        className="receipt-thumbnail"
                                     />
-                                ) : (
-                                    <p>No image available</p>
                                 )}
                             </div>
                             
-                            {/* Extracted Data */}
-                            <div style={{ flex: '1 1 300px' }}>
-                                <h5>Extracted Data</h5>
-                                <div style={{ backgroundColor: '#f5f5f5', padding: '10px', borderRadius: '4px' }}>
-                                    {receipt.items && receipt.items.length > 0 ? (
-                                        <div>
-                                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                                                <thead>
-                                                    <tr>
-                                                        <th style={{ textAlign: 'left', padding: '8px', borderBottom: '1px solid #ddd' }}>Item</th>
-                                                        <th style={{ textAlign: 'right', padding: '8px', borderBottom: '1px solid #ddd' }}>Price</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {receipt.items.map((item, index) => (
-                                                        <tr key={index}>
-                                                            <td style={{ padding: '8px', borderBottom: '1px solid #eee' }}>{item.name}</td>
-                                                            <td style={{ textAlign: 'right', padding: '8px', borderBottom: '1px solid #eee' }}>
-                                                                {formatCurrency(item.price)}
-                                                            </td>
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                                <tfoot>
-                                                    <tr>
-                                                        <td style={{ padding: '8px', fontWeight: 'bold' }}>Total</td>
-                                                        <td style={{ textAlign: 'right', padding: '8px', fontWeight: 'bold' }}>
-                                                            {formatCurrency(receipt.total_amount)}
-                                                        </td>
-                                                    </tr>
-                                                </tfoot>
-                                            </table>
-                                        </div>
-                                    ) : (
-                                        <div>
-                                            <p><strong>Store:</strong> {receipt.store_name || 'Unknown'}</p>
-                                            <p><strong>Total:</strong> {formatCurrency(receipt.total_amount)}</p>
-                                            <p><strong>Date:</strong> {formatDate(receipt.purchase_date)}</p>
-                                            <p><strong>Raw Text:</strong></p>
-                                            <pre style={{ 
-                                                whiteSpace: 'pre-wrap', 
-                                                wordBreak: 'break-word',
-                                                backgroundColor: '#eee',
-                                                padding: '8px',
-                                                fontSize: '0.85rem',
-                                                maxHeight: '200px',
-                                                overflow: 'auto'
-                                            }}>
-                                                {receipt.extracted_text || '(No text extracted)'}
-                                            </pre>
-                                        </div>
-                                    )}
-                                </div>
+                            <div className="card-actions">
+                                <select
+                                    value={receipt.category || ''}
+                                    onChange={(e) => handleQuickCategoryChange(receipt.id, e.target.value)}
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="category-select"
+                                >
+                                    <option value="">Select category</option>
+                                    {categories.map(cat => (
+                                        <option key={cat.id} value={cat.name}>{cat.name}</option>
+                                    ))}
+                                </select>
                             </div>
                         </div>
+                    ))}
+                </div>
+            ) : (
+                <table className="receipts-table">
+                    <thead>
+                        <tr>
+                            <th>
+                                <input
+                                    type="checkbox"
+                                    checked={selectedReceipts.length === filteredReceipts.length}
+                                    onChange={handleSelectAll}
+                                />
+                            </th>
+                            <th>Store</th>
+                            <th>Date</th>
+                            <th>Amount</th>
+                            <th>Category</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {filteredReceipts.map(receipt => (
+                            <tr key={receipt.id}>
+                                <td>
+                                    <input
+                                        type="checkbox"
+                                        checked={selectedReceipts.includes(receipt.id)}
+                                        onChange={() => handleSelectReceipt(receipt.id)}
+                                    />
+                                </td>
+                                <td onClick={() => handleReceiptClick(receipt.id)} className="clickable">
+                                    {receipt.store_name || 'Unknown Store'}
+                                </td>
+                                <td>{formatDate(receipt.purchase_date)}</td>
+                                <td>{formatCurrency(receipt.total_amount)}</td>
+                                <td>
+                                    <select
+                                        value={receipt.category || ''}
+                                        onChange={(e) => handleQuickCategoryChange(receipt.id, e.target.value)}
+                                        className="table-category-select"
+                                    >
+                                        <option value="">Select...</option>
+                                        {categories.map(cat => (
+                                            <option key={cat.id} value={cat.name}>{cat.name}</option>
+                                        ))}
+                                    </select>
+                                </td>
+                                <td>{getStatusBadge(receipt)}</td>
+                                <td>
+                                    <button
+                                        onClick={() => handleReceiptClick(receipt.id)}
+                                        className="view-button"
+                                    >
+                                        View
+                                    </button>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            )}
+
+            {/* Delete Confirmation Modal */}
+            {showDeleteConfirm && (
+                <div className="modal-overlay" onClick={() => setShowDeleteConfirm(false)}>
+                    <div className="modal-content" onClick={e => e.stopPropagation()}>
+                        <h3>Delete {selectedReceipts.length} Receipt(s)?</h3>
+                        <p>Are you sure you want to delete the selected receipts? This action cannot be undone.</p>
+                        <div className="modal-actions">
+                            <button onClick={() => setShowDeleteConfirm(false)} className="cancel-button">
+                                Cancel
+                            </button>
+                            <button onClick={handleBulkDelete} className="confirm-delete-button">
+                                Delete
+                            </button>
+                        </div>
                     </div>
-                ))}
-            </div>
+                </div>
+            )}
         </div>
     );
 }

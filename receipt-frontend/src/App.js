@@ -4,14 +4,15 @@ import { AuthProvider, useAuth } from './AuthContext';
 import Login from './components/Login';
 import Signup from './components/Signup';
 import Dashboard from './components/Dashboard';
-import ProtectedRoute from './components/ProtectedRoute'; // Import ProtectedRoute
-import './App.css'; // Or your preferred styling
+import ReceiptDetail from './components/ReceiptDetail';
+import ProtectedRoute from './components/ProtectedRoute';
+import './App.css';
 
 function AppContent() {
-    const { user, loading } = useAuth(); // Get user state to redirect if already logged in
+    const { user, loading } = useAuth();
 
     if (loading) {
-        return <div>Loading Application...</div>; // Prevent rendering routes before auth check is complete
+        return <div className="loading-app">Loading Application...</div>;
     }
 
     return (
@@ -22,17 +23,23 @@ function AppContent() {
 
             {/* Protected routes */}
             <Route element={<ProtectedRoute />}>
-                 {/* All routes within here require authentication */}
                 <Route path="/dashboard" element={<Dashboard />} />
-                {/* Add other protected routes here */}
+                <Route path="/receipt/:id" element={<ReceiptDetail />} />
             </Route>
 
-             {/* Redirect root path */}
-             {/* If logged in, go to dashboard, otherwise go to login */}
-             <Route path="/" element={<Navigate to={user ? "/dashboard" : "/login"} replace />} />
+            {/* Redirect root path */}
+            <Route path="/" element={<Navigate to={user ? "/dashboard" : "/login"} replace />} />
 
-             {/* Optional: Catch-all 404 */}
-            <Route path="*" element={<div>404 Not Found</div>} />
+            {/* 404 Page */}
+            <Route path="*" element={
+                <div className="not-found">
+                    <h1>404 - Page Not Found</h1>
+                    <p>The page you're looking for doesn't exist.</p>
+                    <button onClick={() => window.location.href = '/dashboard'}>
+                        Go to Dashboard
+                    </button>
+                </div>
+            } />
         </Routes>
     );
 }
@@ -40,11 +47,10 @@ function AppContent() {
 function App() {
     return (
         <Router>
-            <AuthProvider> {/* Wrap everything in AuthProvider */}
-                 <div className="App">
-                    <h1>Receipt Scanner App</h1>
-                    <AppContent /> {/* Render routes */}
-                 </div>
+            <AuthProvider>
+                <div className="App">
+                    <AppContent />
+                </div>
             </AuthProvider>
         </Router>
     );

@@ -544,6 +544,217 @@ app.use((err, req, res, next) => {
     });
 });
 
+app.get('/receipts/:id', async (req, res) => {
+    try {
+        const receiptId = req.params.id;
+        const authHeader = req.headers.authorization;
+        
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            return res.status(401).json({ message: 'Unauthorized' });
+        }
+
+        const token = authHeader.split(' ')[1];
+        const { data: userData, error: userError } = await supabase.auth.getUser(token);
+        
+        if (userError || !userData.user) {
+            return res.status(401).json({ message: 'Invalid token' });
+        }
+        
+        const userId = userData.user.id;
+        
+        // Get receipt from Supabase
+        const { data, error } = await supabase
+            .from('receipts')
+            .select('*')
+            .eq('id', receiptId)
+            .eq('user_id', userId)
+            .single();
+
+        if (error || !data) {
+            return res.status(404).json({ message: 'Receipt not found' });
+        }
+
+        // Generate presigned URL if needed
+        let presignedUrl = null;
+        if (data.image_url && data.image_url.startsWith('s3://')) {
+            const parts = data.image_url.replace('s3://', '').split('/');
+            const bucket = parts[0];
+            const key = parts.slice(1).join('/');
+            
+            try {
+                presignedUrl = s3.getSignedUrl('getObject', {
+                    Bucket: bucket,
+                    Key: key,
+                    Expires: 3600
+                });
+            } catch (err) {
+                console.error('Error generating presigned URL:', err);
+            }
+        }
+
+        res.json({
+            ...data,
+            presigned_url: presignedUrl
+        });
+    } catch (error) {
+        console.error('Error fetching receipt:', error);
+        res.status(500).json({ message: 'Failed to fetch receipt', error: error.message });
+    }
+});
+
+// Delete receipt endpoint (soft delete)
+app.delete('/receipts/:id', async (req, res) => {
+    try {
+        const receiptId = req.params.id;
+        const authHeader = req.headers.authorization;
+        
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            return res.status(401).json({ message: 'Unauthorized' });
+        }
+
+        const token = authHeader.split(' ')[1];
+        const { data: userData, error: userError } = await supabase.auth.getUser(token);
+        
+        if (userError || !userData.user) {
+            return res.status(401).json({ message: 'Invalid token' });
+        }
+        
+        const userId = userData.user.id;
+        
+        // Soft delete by updating is_deleted flag
+        const { data, error } = await supabase
+            .from('receipts')
+            .update({
+                is_deleted: true,
+                deleted_at: new Date().toISOString()
+            })
+            .eq('id', receiptId)
+            .eq('user_id', userId)
+            .select()
+            .single();
+        
+        if (error) {
+            if (error.code === 'PGRST116') {
+                return res.status(404).json({ message: 'Receipt not found' });
+            }
+            throw error;
+        }
+        
+        res.json({ message: 'Receipt deleted successfully', receipt: data });
+    } catch (error) {
+        console.error('Error deleting receipt:', error);
+        res.status(500).json({ message: 'Failed to delete receipt', error: error.message });
+    }
+});
+
+// Bulk delete receipts endpoint
+app.post('/receipts/bulk-delete', async (req, res) => {
+    try {
+        const { receiptIds } = req.body;
+        const authHeader = req.headers.authorization;
+        
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            return res.status(401).json({ message: 'Unauthorized' });
+        }
+
+        if (!Array.isArray(receiptIds) || receiptIds.length === 0) {
+            return res.status(400).json({ message: 'Invalid receipt IDs' });
+        }
+
+        const token = authHeader.split(' ')[1];
+        const { data: userData, error: userError } = await supabase.auth.getUser(token);
+        
+        if (userError || !userData.user) {
+            return res.status(401).json({ message: 'Invalid token' });
+        }
+        
+        const userId = userData.user.id;
+        
+        // Soft delete multiple receipts
+        const { data, error } = await supabase
+            .from('receipts')
+            .update({
+                is_deleted: true,
+                deleted_at: new Date().toISOString()
+            })
+            .in('id', receiptIds)
+            .eq('user_id', userId);
+        
+        if (error) {
+            throw error;
+        }
+        
+        res.json({ message: `${receiptIds.length} receipts deleted successfully` });
+    } catch (error) {
+        console.error('Error bulk deleting receipts:', error);
+        res.status(500).json({ message: 'Failed to delete receipts', error: error.message });
+    }
+});
+
+// Update the existing GET /receipts endpoint to exclude deleted receipts
+// Replace the existing endpoint with this:
+app.get('/receipts', async (req, res) => {
+    try {
+        // Verify JWT token
+        const authHeader = req.headers.authorization;
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            return res.status(401).json({ message: 'Unauthorized' });
+        }
+
+        const token = authHeader.split(' ')[1];
+        const { data: userData, error: userError } = await supabase.auth.getUser(token);
+        
+        if (userError || !userData.user) {
+            return res.status(401).json({ message: 'Invalid token' });
+        }
+        
+        const userId = userData.user.id;
+        
+        // Get receipts from Supabase, excluding deleted ones
+        const { data, error } = await supabase
+            .from('receipts')
+            .select('*')
+            .eq('user_id', userId)
+            .or('is_deleted.is.null,is_deleted.eq.false')
+            .order('created_at', { ascending: false });
+
+        if (error) {
+            throw error;
+        }
+
+        // Generate presigned URLs for all receipt images
+        const receiptsWithUrls = await Promise.all(data.map(async (receipt) => {
+            let presignedUrl = null;
+            
+            if (receipt.image_url && receipt.image_url.startsWith('s3://')) {
+                const parts = receipt.image_url.replace('s3://', '').split('/');
+                const bucket = parts[0];
+                const key = parts.slice(1).join('/');
+                
+                try {
+                    presignedUrl = s3.getSignedUrl('getObject', {
+                        Bucket: bucket,
+                        Key: key,
+                        Expires: 3600 // URL expires in 1 hour
+                    });
+                } catch (err) {
+                    console.error('Error generating presigned URL:', err);
+                }
+            }
+            
+            return {
+                ...receipt,
+                presigned_url: presignedUrl
+            };
+        }));
+
+        res.json(receiptsWithUrls);
+    } catch (error) {
+        console.error('Error fetching receipts:', error);
+        res.status(500).json({ message: 'Failed to fetch receipts', error: error.message });
+    }
+});
+
 // Start server
 app.listen(port, () => {
     console.log(`Receipt backend server running at http://localhost:${port}`);
