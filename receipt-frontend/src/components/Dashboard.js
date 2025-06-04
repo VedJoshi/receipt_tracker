@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import axios from 'axios';
 import { useAuth } from '../AuthContext';
 import './Dashboard.css';
+import LoadingSpinner from './LoadingSpinner';
 
 const API_URL = process.env.REACT_APP_API_GATEWAY_URL;
 
@@ -388,21 +389,30 @@ function Dashboard() {
                 </div>
             </div>
 
-            {/* Upload Section */}
+            {/* Upload Section with Enhanced Loading */}
             <div className="upload-section">
                 <h2>Upload New Receipt</h2>
-                <form onSubmit={handleUpload} className="upload-form">
-                    <input
-                        id="receipt-upload-input"
-                        type="file"
-                        accept="image/*"
-                        onChange={handleFileChange}
-                        required
+                {uploading ? (
+                    <LoadingSpinner 
+                        stage="uploading"
+                        progress={75}
+                        fileName={file?.name}
+                        estimatedTime="30 seconds"
                     />
-                    <button type="submit" disabled={uploading || !file} className="upload-button">
-                        {uploading ? 'Processing...' : 'Upload & Process'}
-                    </button>
-                </form>
+                ) : (
+                    <form onSubmit={handleUpload} className="upload-form">
+                        <input
+                            id="receipt-upload-input"
+                            type="file"
+                            accept="image/*"
+                            onChange={handleFileChange}
+                            required
+                        />
+                        <button type="submit" disabled={uploading || !file} className="upload-button">
+                            {uploading ? 'Processing...' : 'Upload & Process'}
+                        </button>
+                    </form>
+                )}
             </div>
 
             {error && (

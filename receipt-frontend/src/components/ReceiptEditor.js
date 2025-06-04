@@ -105,11 +105,12 @@ const ReceiptEditor = ({ receipt, onSave, onCancel }) => {
         }
       );
 
-      console.log('Receipt updated successfully:', response.data);
-      onSave(response.data.receipt);
+      if (response.data) {
+        onSave(response.data.receipt || response.data);
+      }
     } catch (err) {
       console.error('Error saving receipt:', err);
-      setError(err.response?.data?.message || 'Failed to save receipt');
+      setError('Failed to save changes');
     } finally {
       setSaving(false);
     }

@@ -201,11 +201,13 @@ function ReceiptDetail() {
                 }
             );
             
-            setReceipt(response.data.receipt);
-            setEditedReceipt(response.data.receipt);
+            if (response.data.receipt) {
+                setReceipt(response.data.receipt);
+                setEditedReceipt(response.data.receipt);
+            }
         } catch (err) {
             console.error('Error reprocessing receipt:', err);
-            setError(err.response?.data?.message || 'Failed to reprocess receipt');
+            setError('Failed to reprocess receipt');
         } finally {
             setIsReprocessing(false);
         }
@@ -213,16 +215,13 @@ function ReceiptDetail() {
 
     // Calculate totals
     const calculateItemsTotal = () => {
-        if (!editedReceipt?.items) return 0;
+        if (!editedReceipt?.items) return '0.00';
         return editedReceipt.items.reduce((sum, item) => {
-            return sum + (item.price * (item.quantity || 1));
+            return sum + (parseFloat(item.price) * parseInt(item.quantity || 1));
         }, 0).toFixed(2);
     };
 
     // Image controls
-    const handleZoomIn = () => setImageZoom(prev => Math.min(prev + 0.25, 3));
-    const handleZoomOut = () => setImageZoom(prev => Math.max(prev - 0.25, 0.5));
-    const handleRotate = () => setImageRotation(prev => (prev + 90) % 360);
     const handleResetImage = () => {
         setImageZoom(1);
         setImageRotation(0);
