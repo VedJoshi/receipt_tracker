@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import axios from 'axios';
 import { useAuth } from '../AuthContext';
 import './Dashboard.css';
@@ -8,6 +8,7 @@ const API_URL = process.env.REACT_APP_API_GATEWAY_URL;
 
 function Dashboard() {
     const navigate = useNavigate();
+    const location = useLocation();
     const { user, session, signOut } = useAuth();
     
     // State management
@@ -56,6 +57,22 @@ function Dashboard() {
     useEffect(() => {
         setShowBulkActions(selectedReceipts.length > 0);
     }, [selectedReceipts]);
+
+    // Handle navigation state messages
+    useEffect(() => {
+        if (location.state?.message) {
+            // You could show a toast notification here
+            console.log(location.state.message);
+            
+            // Clear the state after showing the message
+            navigate(location.pathname, { replace: true });
+        }
+        
+        if (location.state?.refresh) {
+            // Force refresh the receipts
+            fetchReceipts();
+        }
+    }, [location.state]);
 
     const fetchReceipts = async () => {
         setError('');
@@ -252,21 +269,32 @@ function Dashboard() {
 
     const handleBulkDelete = async () => {
         try {
-            await Promise.all(
-                selectedReceipts.map(id =>
-                    axios.delete(`${API_URL}/receipts/${id}`, {
-                        headers: { Authorization: `Bearer ${session.access_token}` }
-                    })
-                )
+            setError('');
+            
+            const response = await axios.post(
+                `${API_URL}/receipts/bulk-delete`,
+                { receiptIds: selectedReceipts },
+                {
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${session.access_token}` 
+                    }
+                }
             );
             
+            console.log('Bulk delete response:', response.data);
+            
             setSelectedReceipts([]);
-            fetchReceipts();
+            setShowDeleteConfirm(false);
+            
+            // Immediately refresh receipts after deletion
+            await fetchReceipts();
+            
         } catch (err) {
-            console.error('Error deleting receipts:', err);
-            setError('Failed to delete some receipts');
+            console.error('Error bulk deleting receipts:', err);
+            setError(`Failed to delete receipts: ${err.response?.data?.message || err.message}`);
+            setShowDeleteConfirm(false);
         }
-        setShowDeleteConfirm(false);
     };
 
     const handleBulkCategorize = async (category) => {

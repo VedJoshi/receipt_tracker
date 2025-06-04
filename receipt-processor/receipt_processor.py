@@ -22,12 +22,27 @@ elif os.path.exists('/usr/bin/tesseract'):
     pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
 
 class ReceiptProcessor:
-    """Enhanced receipt processing with multiple OCR strategies and confidence scoring"""
+    """Enhanced receipt processing with improved item parsing and tax extraction"""
     
     def __init__(self):
         self.categories = [
             'Groceries', 'Restaurants', 'Gas & Fuel', 'Shopping', 
             'Healthcare', 'Entertainment', 'Transportation', 'Other'
+        ]
+        
+        # Common receipt section patterns
+        self.skip_patterns = [
+            r'(?i)(thank\s+you|visit\s+us|store\s+hours|customer\s+service)',
+            r'(?i)(phone|tel|fax|email|website|www\.)',
+            r'(?i)(address|street|ave|avenue|road|rd|blvd|boulevard)',
+            r'(?i)(city|state|zip|postal|country)',
+            r'(?i)(receipt|invoice|bill|order)\s*#?\s*\d*',
+            r'(?i)(cashier|clerk|server|manager)',
+            r'(?i)(tender|payment|change|cash|credit|debit)',
+            r'(?i)(subtotal|sub\s*total|total|tax|hst|gst|vat|amount)',
+            r'^\d{1,2}[:/]\d{1,2}',  # Time patterns
+            r'^\d+$',  # Just numbers
+            r'^[\W\s]*$',  # Just special characters
         ]
         
     def test_tesseract(self) -> bool:
@@ -43,13 +58,6 @@ class ReceiptProcessor:
     def process_receipt(self, image_data: bytes, enhance_quality: bool = True) -> Dict[str, Any]:
         """
         Main entry point for receipt processing
-        
-        Args:
-            image_data: Image bytes
-            enhance_quality: Whether to apply quality enhancement
-            
-        Returns:
-            Dictionary with extracted data and confidence scores
         """
         try:
             # Preprocess image with multiple strategies
@@ -64,7 +72,7 @@ class ReceiptProcessor:
             if not best_result['text']:
                 return self._create_error_response("No text could be extracted from the image")
             
-            # Extract structured data
+            # Extract structured data with improved parsing
             extracted_data = self.extract_structured_data(best_result['text'])
             
             # Calculate confidence scores
@@ -81,6 +89,8 @@ class ReceiptProcessor:
                 'total_amount': extracted_data['total_amount'],
                 'purchase_date': extracted_data['purchase_date'],
                 'items': extracted_data['items'],
+                'tax_amount': extracted_data['tax_amount'],
+                'subtotal': extracted_data['subtotal'],
                 'suggested_category': suggested_category,
                 'overall_confidence': overall_confidence,
                 'confidence_breakdown': confidence_breakdown,
@@ -93,12 +103,7 @@ class ReceiptProcessor:
             return self._create_error_response(str(e))
     
     def preprocess_image(self, image_data: bytes, enhance_quality: bool) -> List[Dict[str, Any]]:
-        """
-        Apply multiple preprocessing strategies to improve OCR accuracy
-        
-        Returns:
-            List of preprocessed images with metadata
-        """
+        """Apply multiple preprocessing strategies to improve OCR accuracy"""
         # Load image
         nparr = np.frombuffer(image_data, np.uint8)
         image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -146,62 +151,11 @@ class ReceiptProcessor:
                 'method': 'adaptive_gaussian',
                 'description': 'Adaptive Gaussian threshold'
             })
-            
-            # Method 5: Deskew if needed
-            deskewed = self._deskew_image(gray)
-            if deskewed is not None:
-                _, deskewed_thresh = cv2.threshold(deskewed, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-                results.append({
-                    'image': deskewed_thresh,
-                    'method': 'deskewed',
-                    'description': 'Deskewed and thresholded'
-                })
         
         return results
     
-    def _deskew_image(self, image: np.ndarray) -> Optional[np.ndarray]:
-        """Correct image skew/rotation"""
-        try:
-            # Create a binary image
-            _, binary = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            
-            # Find all white pixels
-            coords = np.column_stack(np.where(binary > 0))
-            
-            # Find minimum area rectangle
-            angle = cv2.minAreaRect(coords)[-1]
-            
-            # Correct the angle
-            if angle < -45:
-                angle = -(90 + angle)
-            else:
-                angle = -angle
-                
-            # Skip if angle is too small
-            if abs(angle) < 0.5:
-                return None
-                
-            # Rotate the image
-            (h, w) = image.shape[:2]
-            center = (w // 2, h // 2)
-            M = cv2.getRotationMatrix2D(center, angle, 1.0)
-            rotated = cv2.warpAffine(image, M, (w, h), 
-                                   flags=cv2.INTER_CUBIC, 
-                                   borderMode=cv2.BORDER_REPLICATE)
-            
-            return rotated
-            
-        except Exception as e:
-            logger.warning(f"Deskew failed: {e}")
-            return None
-    
     def perform_ocr(self, preprocessed_images: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        Perform OCR with multiple configurations on preprocessed images
-        
-        Returns:
-            List of OCR results with confidence scores
-        """
+        """Perform OCR with multiple configurations on preprocessed images"""
         results = []
         
         # Different Tesseract configurations to try
@@ -294,13 +248,13 @@ class ReceiptProcessor:
         return sorted_results[0]
     
     def extract_structured_data(self, text: str) -> Dict[str, Any]:
-        """Extract structured information from OCR text"""
+        """Extract structured information from OCR text with improved parsing"""
         return {
             'store_name': self._extract_store_name(text),
             'total_amount': self._extract_total_amount(text),
             'purchase_date': self._extract_purchase_date(text),
-            'items': self._extract_items(text),
-            'tax_amount': self._extract_tax_amount(text),
+            'items': self._extract_items_improved(text),
+            'tax_amount': self._extract_tax_amount_improved(text),
             'subtotal': self._extract_subtotal(text)
         }
     
@@ -320,6 +274,7 @@ class ReceiptProcessor:
                 r'(?i)^(receipt|invoice|bill|order)$',
                 r'\d{1,2}[:/\-]\d{1,2}',  # Time patterns
                 r'\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4}',  # Date patterns
+                r'(?i)(phone|tel|address|street|ave|rd)',  # Contact info
             ]
             
             if any(re.search(pattern, line) for pattern in skip_patterns):
@@ -333,6 +288,217 @@ class ReceiptProcessor:
                     return cleaned
         
         return None
+    
+    def _extract_tax_amount_improved(self, text: str) -> Optional[float]:
+        """Improved tax amount extraction with multiple patterns"""
+        # More comprehensive tax patterns
+        tax_patterns = [
+            # Standard tax patterns
+            (r'(?i)(?:tax|hst|gst|vat|sales\s*tax)[\s:]*\$?\s*([\d,]+\.?\d{0,2})', 1.0),
+            (r'(?i)(?:tax\s*total|total\s*tax)[\s:]*\$?\s*([\d,]+\.?\d{0,2})', 1.0),
+            (r'(?i)(?:provincial\s*tax|federal\s*tax)[\s:]*\$?\s*([\d,]+\.?\d{0,2})', 0.9),
+            
+            # Line-by-line tax detection
+            (r'(?i)^.*tax.*\$?\s*([\d,]+\.\d{2})\s*$', 0.8),
+            
+            # Tax abbreviations
+            (r'(?i)(?:tx|st|ft)[\s:]*\$?\s*([\d,]+\.?\d{0,2})', 0.7),
+        ]
+        
+        candidates = []
+        
+        for pattern, confidence in tax_patterns:
+            matches = re.finditer(pattern, text, re.MULTILINE)
+            for match in matches:
+                try:
+                    amount = float(match.group(1).replace(',', ''))
+                    # Tax amounts are typically reasonable (not too large or small)
+                    if 0.01 <= amount <= 1000.0:
+                        candidates.append((amount, confidence))
+                except (ValueError, IndexError):
+                    continue
+        
+        if candidates:
+            # Sort by confidence, then by reasonable tax amount
+            candidates.sort(key=lambda x: x[1], reverse=True)
+            return candidates[0][0]
+        
+        return None
+    
+    def _extract_items_improved(self, text: str) -> List[Dict[str, Any]]:
+        """Improved item extraction with better parsing"""
+        lines = text.split('\n')
+        items = []
+        
+        # Define what lines to skip (headers, footers, totals, etc.)
+        skip_line_if_contains = [
+            'total', 'subtotal', 'tax', 'balance', 'change', 'cash', 'credit', 'debit',
+            'payment', 'thank you', 'receipt', 'invoice', 'cashier', 'server',
+            'visit us', 'store hours', 'customer service', 'phone', 'address',
+            'street', 'avenue', 'road', 'city', 'state', 'zip', 'postal'
+        ]
+        
+        for line_num, line in enumerate(lines):
+            original_line = line.strip()
+            if not original_line or len(original_line) < 3:
+                continue
+            
+            # Skip lines that contain skip keywords
+            line_lower = original_line.lower()
+            if any(keyword in line_lower for keyword in skip_line_if_contains):
+                continue
+            
+            # Skip lines that match skip patterns
+            if any(re.search(pattern, original_line) for pattern in self.skip_patterns):
+                continue
+            
+            # Try different item parsing patterns
+            parsed_item = self._parse_item_line(original_line)
+            if parsed_item:
+                items.append(parsed_item)
+        
+        # Post-process items to remove duplicates and clean up
+        items = self._clean_item_list(items)
+        
+        return items
+    
+    def _parse_item_line(self, line: str) -> Optional[Dict[str, Any]]:
+        """Parse a single line to extract item information"""
+        
+        # Pattern 1: Quantity at the beginning: "2 Item Name $10.50" or "2x Item Name $10.50"
+        pattern1 = r'^(\d+)\s*[xX]?\s+(.+?)\s+\$?\s*(\d+\.?\d{0,2})\s*$'
+        match = re.match(pattern1, line)
+        if match:
+            try:
+                quantity = int(match.group(1))
+                name = match.group(2).strip()
+                total_price = float(match.group(3))
+                unit_price = total_price / quantity if quantity > 0 else total_price
+                
+                if self._is_valid_item_name(name) and total_price > 0:
+                    return {
+                        'name': name,
+                        'quantity': quantity,
+                        'price': round(unit_price, 2)
+                    }
+            except (ValueError, ZeroDivisionError):
+                pass
+        
+        # Pattern 2: Item with @ symbol: "Item Name 2 @ $5.25"
+        pattern2 = r'^(.+?)\s+(\d+)\s*@\s*\$?\s*(\d+\.?\d{0,2})\s*$'
+        match = re.match(pattern2, line)
+        if match:
+            try:
+                name = match.group(1).strip()
+                quantity = int(match.group(2))
+                unit_price = float(match.group(3))
+                
+                if self._is_valid_item_name(name) and unit_price > 0:
+                    return {
+                        'name': name,
+                        'quantity': quantity,
+                        'price': unit_price
+                    }
+            except ValueError:
+                pass
+        
+        # Pattern 3: Simple item with price at end: "Item Name $12.99"
+        pattern3 = r'^(.+?)\s+\$?\s*(\d+\.\d{2})\s*$'
+        match = re.match(pattern3, line)
+        if match:
+            try:
+                name = match.group(1).strip()
+                price = float(match.group(2))
+                
+                if self._is_valid_item_name(name) and price > 0:
+                    return {
+                        'name': name,
+                        'quantity': 1,
+                        'price': price
+                    }
+            except ValueError:
+                pass
+        
+        # Pattern 4: Item name followed by quantity and price: "Item Name x2 $10.00"
+        pattern4 = r'^(.+?)\s*[xX]\s*(\d+)\s+\$?\s*(\d+\.?\d{0,2})\s*$'
+        match = re.match(pattern4, line)
+        if match:
+            try:
+                name = match.group(1).strip()
+                quantity = int(match.group(2))
+                total_price = float(match.group(3))
+                unit_price = total_price / quantity if quantity > 0 else total_price
+                
+                if self._is_valid_item_name(name) and total_price > 0:
+                    return {
+                        'name': name,
+                        'quantity': quantity,
+                        'price': round(unit_price, 2)
+                    }
+            except (ValueError, ZeroDivisionError):
+                pass
+        
+        return None
+    
+    def _is_valid_item_name(self, name: str) -> bool:
+        """Check if a string is a valid item name"""
+        if not name or len(name) < 2:
+            return False
+        
+        # Name shouldn't be too long (likely address or other info)
+        if len(name) > 100:
+            return False
+        
+        # Name shouldn't be mostly numbers
+        if sum(c.isdigit() for c in name) > len(name) * 0.7:
+            return False
+        
+        # Name shouldn't contain too many special characters
+        special_chars = sum(1 for c in name if not c.isalnum() and c not in ' -&\'.')
+        if special_chars > len(name) * 0.3:
+            return False
+        
+        # Skip common non-item patterns
+        invalid_patterns = [
+            r'(?i)(street|avenue|road|blvd|suite|floor|apt)',
+            r'(?i)(phone|tel|fax|email|www)',
+            r'(?i)(hours|monday|tuesday|wednesday|thursday|friday|saturday|sunday)',
+            r'(?i)(manager|cashier|server|clerk)',
+            r'^\d+$',  # Just a number
+        ]
+        
+        if any(re.search(pattern, name) for pattern in invalid_patterns):
+            return False
+        
+        return True
+    
+    def _clean_item_list(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Clean up the item list by removing duplicates and invalid entries"""
+        if not items:
+            return []
+        
+        cleaned_items = []
+        seen_names = set()
+        
+        for item in items:
+            name_lower = item['name'].lower().strip()
+            
+            # Skip if we've seen this item name before
+            if name_lower in seen_names:
+                continue
+            
+            # Skip items with invalid prices
+            if item['price'] <= 0 or item['price'] > 10000:
+                continue
+            
+            # Skip items with invalid quantities
+            if item['quantity'] <= 0 or item['quantity'] > 100:
+                continue
+            
+            seen_names.add(name_lower)
+            cleaned_items.append(item)
+        
+        return cleaned_items
     
     def _extract_total_amount(self, text: str) -> Optional[float]:
         """Extract total amount with multiple pattern matching"""
@@ -372,23 +538,6 @@ class ReceiptProcessor:
                 continue
         
         return max(amounts) if amounts else None
-    
-    def _extract_tax_amount(self, text: str) -> Optional[float]:
-        """Extract tax amount"""
-        patterns = [
-            r'(?i)(?:tax|hst|gst|vat)[\s:]*\$?\s*([\d,]+\.?\d{0,2})',
-            r'(?i)(?:sales\s+tax)[\s:]*\$?\s*([\d,]+\.?\d{0,2})',
-        ]
-        
-        for pattern in patterns:
-            match = re.search(pattern, text)
-            if match:
-                try:
-                    return float(match.group(1).replace(',', ''))
-                except ValueError:
-                    continue
-        
-        return None
     
     def _extract_subtotal(self, text: str) -> Optional[float]:
         """Extract subtotal amount"""
@@ -448,79 +597,6 @@ class ReceiptProcessor:
         
         return None
     
-    def _extract_items(self, text: str) -> List[Dict[str, Any]]:
-        """Extract line items with improved parsing"""
-        lines = text.split('\n')
-        items = []
-        
-        # Patterns for item lines
-        item_patterns = [
-            # Item name followed by price
-            r'^(.+?)\s+\$?\s*(\d+\.?\d{0,2})\s*$',
-            # Item with quantity: "2 x Item $5.99" or "Item x2 $5.99"
-            r'^(\d+)\s*[xX]\s*(.+?)\s+\$?\s*(\d+\.?\d{0,2})\s*$',
-            r'^(.+?)\s*[xX]\s*(\d+)\s+\$?\s*(\d+\.?\d{0,2})\s*$',
-            # Item with @ price: "Item 2 @ $3.00"
-            r'^(.+?)\s+(\d+)\s*@\s*\$?\s*(\d+\.?\d{0,2})\s*$',
-        ]
-        
-        # Skip patterns
-        skip_keywords = [
-            'total', 'subtotal', 'tax', 'balance', 'change', 'cash',
-            'credit', 'debit', 'payment', 'thank you', 'receipt'
-        ]
-        
-        for line in lines:
-            line = line.strip()
-            if not line or len(line) < 3:
-                continue
-            
-            # Skip lines with total/tax keywords
-            if any(keyword in line.lower() for keyword in skip_keywords):
-                continue
-            
-            # Try to match item patterns
-            for pattern in item_patterns:
-                match = re.match(pattern, line)
-                if match:
-                    groups = match.groups()
-                    
-                    if len(groups) == 2:  # Simple item + price
-                        item_name = groups[0].strip()
-                        try:
-                            price = float(groups[1])
-                            items.append({
-                                'name': item_name,
-                                'price': price,
-                                'quantity': 1
-                            })
-                        except ValueError:
-                            continue
-                    
-                    elif len(groups) == 3:  # Item with quantity
-                        try:
-                            # Determine order based on pattern
-                            if pattern.startswith(r'^(\d+)'):
-                                quantity = int(groups[0])
-                                item_name = groups[1].strip()
-                                price = float(groups[2])
-                            else:
-                                item_name = groups[0].strip()
-                                quantity = int(groups[1])
-                                price = float(groups[2])
-                            
-                            items.append({
-                                'name': item_name,
-                                'price': price / quantity,  # Unit price
-                                'quantity': quantity
-                            })
-                        except ValueError:
-                            continue
-                    
-                    break
-        
-        return items
-    
     def calculate_confidence_scores(self, extracted_data: Dict[str, Any], 
                                   ocr_result: Dict[str, Any]) -> Dict[str, float]:
         """Calculate confidence scores for each extracted field"""
@@ -568,6 +644,12 @@ class ReceiptProcessor:
         else:
             scores['items'] = 0.0
         
+        # Tax confidence
+        if extracted_data['tax_amount'] is not None:
+            scores['tax_extraction'] = 0.8
+        else:
+            scores['tax_extraction'] = 0.0
+        
         return scores
     
     def suggest_category(self, extracted_data: Dict[str, Any]) -> Optional[str]:
@@ -614,6 +696,8 @@ class ReceiptProcessor:
             'total_amount': None,
             'purchase_date': None,
             'items': [],
+            'tax_amount': None,
+            'subtotal': None,
             'suggested_category': None,
             'overall_confidence': 0.0,
             'confidence_breakdown': {}

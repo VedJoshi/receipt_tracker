@@ -77,11 +77,12 @@ app.get('/receipts', async (req, res) => {
         
         const userId = userData.user.id;
         
-        // Get receipts from Supabase
+        // Get receipts from Supabase, excluding deleted ones
         const { data, error } = await supabase
             .from('receipts')
             .select('*')
             .eq('user_id', userId)
+            .neq('is_deleted', true)  // This is more explicit than the OR condition
             .order('created_at', { ascending: false });
 
         if (error) {
@@ -562,12 +563,13 @@ app.get('/receipts/:id', async (req, res) => {
         
         const userId = userData.user.id;
         
-        // Get receipt from Supabase
+        // Get receipt from Supabase, excluding deleted ones
         const { data, error } = await supabase
             .from('receipts')
             .select('*')
             .eq('id', receiptId)
             .eq('user_id', userId)
+            .neq('is_deleted', true)  // Exclude soft-deleted receipts
             .single();
 
         if (error || !data) {
@@ -602,7 +604,7 @@ app.get('/receipts/:id', async (req, res) => {
     }
 });
 
-// Delete receipt endpoint (soft delete)
+// Fixed Delete receipt endpoint
 app.delete('/receipts/:id', async (req, res) => {
     try {
         const receiptId = req.params.id;
@@ -621,6 +623,18 @@ app.delete('/receipts/:id', async (req, res) => {
         
         const userId = userData.user.id;
         
+        // First check if receipt exists and belongs to user
+        const { data: existingReceipt, error: checkError } = await supabase
+            .from('receipts')
+            .select('id, user_id')
+            .eq('id', receiptId)
+            .eq('user_id', userId)
+            .single();
+        
+        if (checkError || !existingReceipt) {
+            return res.status(404).json({ message: 'Receipt not found' });
+        }
+        
         // Soft delete by updating is_deleted flag
         const { data, error } = await supabase
             .from('receipts')
@@ -634,20 +648,25 @@ app.delete('/receipts/:id', async (req, res) => {
             .single();
         
         if (error) {
-            if (error.code === 'PGRST116') {
-                return res.status(404).json({ message: 'Receipt not found' });
-            }
+            console.error('Delete error:', error);
             throw error;
         }
         
-        res.json({ message: 'Receipt deleted successfully', receipt: data });
+        res.json({ 
+            message: 'Receipt deleted successfully', 
+            receipt: data 
+        });
+        
     } catch (error) {
         console.error('Error deleting receipt:', error);
-        res.status(500).json({ message: 'Failed to delete receipt', error: error.message });
+        res.status(500).json({ 
+            message: 'Failed to delete receipt', 
+            error: error.message 
+        });
     }
 });
 
-// Bulk delete receipts endpoint
+// Fixed Bulk delete receipts endpoint
 app.post('/receipts/bulk-delete', async (req, res) => {
     try {
         const { receiptIds } = req.body;
@@ -671,28 +690,36 @@ app.post('/receipts/bulk-delete', async (req, res) => {
         const userId = userData.user.id;
         
         // Soft delete multiple receipts
-        const { data, error } = await supabase
+        const { data, error, count } = await supabase
             .from('receipts')
             .update({
                 is_deleted: true,
                 deleted_at: new Date().toISOString()
             })
             .in('id', receiptIds)
-            .eq('user_id', userId);
+            .eq('user_id', userId)
+            .select();
         
         if (error) {
+            console.error('Bulk delete error:', error);
             throw error;
         }
         
-        res.json({ message: `${receiptIds.length} receipts deleted successfully` });
+        const deletedCount = data ? data.length : 0;
+        res.json({ 
+            message: `${deletedCount} receipts deleted successfully`,
+            deleted_count: deletedCount 
+        });
+        
     } catch (error) {
         console.error('Error bulk deleting receipts:', error);
-        res.status(500).json({ message: 'Failed to delete receipts', error: error.message });
+        res.status(500).json({ 
+            message: 'Failed to delete receipts', 
+            error: error.message 
+        });
     }
 });
 
-// Update the existing GET /receipts endpoint to exclude deleted receipts
-// Replace the existing endpoint with this:
 app.get('/receipts', async (req, res) => {
     try {
         // Verify JWT token
@@ -715,7 +742,7 @@ app.get('/receipts', async (req, res) => {
             .from('receipts')
             .select('*')
             .eq('user_id', userId)
-            .or('is_deleted.is.null,is_deleted.eq.false')
+            .neq('is_deleted', true)  // This is more explicit than the OR condition
             .order('created_at', { ascending: false });
 
         if (error) {

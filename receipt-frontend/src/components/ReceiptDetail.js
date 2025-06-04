@@ -156,15 +156,35 @@ function ReceiptDetail() {
     // Delete receipt
     const handleDelete = async () => {
         try {
-            await axios.delete(`${API_URL}/receipts/${id}`, {
-                headers: { Authorization: `Bearer ${session.access_token}` }
+            setError('');
+            
+            console.log(`Deleting receipt ${id}`);
+            
+            const response = await axios.delete(`${API_URL}/receipts/${id}`, {
+                headers: { 
+                    'Authorization': `Bearer ${session.access_token}`,
+                    'Content-Type': 'application/json'
+                }
             });
-            navigate('/dashboard');
+            
+            console.log('Delete response:', response.data);
+            
+            // Show success message briefly before navigating
+            setShowDeleteConfirm(false);
+            
+            // Navigate back to dashboard immediately after successful deletion
+            navigate('/dashboard', { 
+                state: { 
+                    message: 'Receipt deleted successfully',
+                    refresh: true 
+                } 
+            });
+            
         } catch (err) {
             console.error('Error deleting receipt:', err);
-            setError('Failed to delete receipt');
+            setError(`Failed to delete receipt: ${err.response?.data?.message || err.message}`);
+            setShowDeleteConfirm(false);
         }
-        setShowDeleteConfirm(false);
     };
 
     // Reprocess receipt
