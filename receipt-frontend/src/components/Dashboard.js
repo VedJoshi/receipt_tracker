@@ -187,74 +187,50 @@ function Dashboard() {
         setError('');
         setUploading(true);
 
-        console.log('=== UPLOAD DEBUG INFO ===');
-        console.log('API_URL:', API_URL);
-        console.log('File:', file);
-        console.log('Session token present:', !!session?.access_token);
+        console.log('=== MULTIPART UPLOAD DEBUG ===');
         console.log('File size:', file.size);
         console.log('File type:', file.type);
 
         try {
-            const reader = new FileReader();
-            reader.onloadend = async () => {
-                try {
-                    const base64data = reader.result;
-                    console.log('Base64 data length:', base64data.length);
-                    console.log('Upload URL:', `${API_URL}/upload`);
-                    
-                    // Test if endpoint is reachable first
-                    try {
-                        console.log('Testing OPTIONS request...');
-                        const optionsResponse = await axios.options(`${API_URL}/upload`, {
-                            headers: {
-                                'Origin': window.location.origin,
-                                'Access-Control-Request-Method': 'POST',
-                                'Access-Control-Request-Headers': 'Content-Type, Authorization'
-                            }
-                        });
-                        console.log('OPTIONS response:', optionsResponse.status);
-                    } catch (optionsError) {
-                        console.error('OPTIONS request failed:', optionsError);
-                    }
+            // Use FormData for multipart upload instead of base64
+            const formData = new FormData();
+            formData.append('receiptImage', file);
 
-                    console.log('Sending POST request...');
-                    const response = await axios.post(
-                        `${API_URL}/upload`,
-                        { image: base64data },
-                        {
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'Authorization': `Bearer ${session.access_token}`
-                            },
-                            timeout: 60000
-                        }
-                    );
-                    
-                    console.log('Upload successful!', response.status);
-                    setFile(null);
-                    document.getElementById('receipt-upload-input').value = '';
-                    
-                    if (response.data.receipt?.processing_status === 'failed') {
-                        setError('Receipt uploaded but OCR processing failed. You can edit it manually.');
+            console.log('Sending multipart upload...');
+            
+            const response = await axios.post(
+                `${API_URL}/upload`,
+                formData,
+                {
+                    headers: {
+                        'Content-Type': 'multipart/form-data',
+                        'Authorization': `Bearer ${session.access_token}`
+                    },
+                    timeout: 60000,
+                    onUploadProgress: (progressEvent) => {
+                        const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+                        console.log('Upload progress:', progress + '%');
                     }
-                    
-                    fetchReceipts();
-                } catch (err) {
-                    console.error('=== UPLOAD ERROR DETAILS ===');
-                    console.error('Error object:', err);
-                    console.error('Response status:', err.response?.status);
-                    console.error('Response data:', err.response?.data);
-                    console.error('Response headers:', err.response?.headers);
-                    console.error('Request config:', err.config);
-                    console.error('Request URL:', err.config?.url);
-                    
-                    setError(err.response?.data?.message || `Upload failed: ${err.message}`);
                 }
-            };
-            reader.readAsDataURL(file);
+            );
+            
+            console.log('Upload successful!', response.status);
+            setFile(null);
+            document.getElementById('receipt-upload-input').value = '';
+            
+            if (response.data.receipt?.processing_status === 'failed') {
+                setError('Receipt uploaded but OCR processing failed. You can edit it manually.');
+            }
+            
+            fetchReceipts();
+            
         } catch (err) {
-            console.error('FileReader error:', err);
-            setError('Failed to read file');
+            console.error('=== MULTIPART UPLOAD ERROR ===');
+            console.error('Error:', err.message);
+            console.error('Status:', err.response?.status);
+            console.error('Response:', err.response?.data);
+            
+            setError(err.response?.data?.message || `Upload failed: ${err.message}`);
         } finally {
             setUploading(false);
         }
