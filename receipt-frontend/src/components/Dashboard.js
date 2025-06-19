@@ -181,6 +181,8 @@ function Dashboard() {
     // Add this debug version to your Dashboard.js handleUpload function
 
     const handleUpload = async (e) => {
+        console.log('API_URL:', process.env.REACT_APP_API_GATEWAY_URL);
+        console.log('Full upload URL:', `${API_URL}/upload`);
         e.preventDefault();
         if (!file) return;
 
