@@ -360,7 +360,7 @@ function Dashboard() {
             {/* Header */}
             <div className="dashboard-header">
                 <div>
-                    <h1>ReceiptIQ - </h1>
+                    <h1>ReceiptIQ</h1>
                     <p>Welcome, {user?.email}, Digitize and organize your receipts</p>
                 </div>
                 <button onClick={handleLogout} className="logout-button">
