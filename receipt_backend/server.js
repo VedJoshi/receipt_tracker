@@ -13,9 +13,21 @@ const app = express();
 const port = process.env.PORT || 3001;
 
 // Middleware
-app.use(cors());
+const corsOptions = {
+    origin: [
+        'https://receipt-tracker-navy.vercel.app',
+        'https://d21x61tmtjtlgl.cloudfront.net',
+        'http://localhost:3000'
+    ],
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Origin', 'Accept']
+};
+
+app.use(cors(corsOptions));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true }));
+app.options('*', cors(corsOptions)); // Preflight requests
 
 // Supabase setup
 const supabase = createClient(
