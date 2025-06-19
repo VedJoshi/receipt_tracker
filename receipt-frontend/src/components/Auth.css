@@ -109,15 +109,17 @@
     font-size: 16px;
     font-weight: 500;
     transition: all 0.3s ease;
-    background: white;
+    background: white !important;
     box-sizing: border-box;
-    color: #1a1a1a; /* Dark text for input */
+    color: #1a1a1a !important; /* Force dark text color */
+    -webkit-text-fill-color: #1a1a1a !important; /* Override webkit text fill */
 }
 
 .form-group input:focus {
     outline: none;
     border-color: #3b82f6;
-    background: white;
+    background: white !important;
+    color: #1a1a1a !important; /* Ensure focus state has dark text */
     box-shadow: 
         0 0 0 4px rgba(59, 130, 246, 0.1),
         0 4px 12px rgba(59, 130, 246, 0.15);
@@ -125,8 +127,29 @@
 }
 
 .form-group input::placeholder {
-    color: #6b7280; /* Visible placeholder color */
-    font-weight: 400;
+    color: #6b7280 !important; /* Force visible placeholder color */
+    opacity: 1; /* Ensure placeholder is visible */
+}
+
+/* Override any inherited text colors */
+.form-group input[type="email"],
+.form-group input[type="password"],
+.form-group input[type="text"] {
+    color: #1a1a1a !important;
+    -webkit-text-fill-color: #1a1a1a !important;
+}
+
+/* Input validation states */
+.form-group input.error {
+    border-color: #ef4444;
+    background: #fef2f2 !important;
+    color: #1a1a1a !important;
+}
+
+.form-group input.success {
+    border-color: #10b981;
+    background: #f0fdf4 !important;
+    color: #1a1a1a !important;
 }
 
 .auth-button {
