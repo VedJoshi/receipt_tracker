@@ -12,44 +12,69 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 3001;
 
-// Middleware
-const corsOptions = {
-    origin: [
-        'https://receipt-tracker-navy.vercel.app',
-        'https://d21x61tmtjtlgl.cloudfront.net',
-        'http://localhost:3000'
-    ],
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Origin', 'Accept']
-};
+app.use((req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', '*');
 
-app.use(cors(corsOptions));
+    if (req.method === 'OPTIONS') {
+        return res.status(200).end();
+    }
+    next();
+});
+
+// Body parsing middleware
 app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true }));
-app.options('*', cors(corsOptions)); // Preflight requests
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// Add request logging middleware
+app.use((req, res, next) => {
+    console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+    console.log('Headers:', req.headers);
+    next();
+});
 
 // Supabase setup
 const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_KEY
+        process.env.SUPABASE_URL,
+        process.env.SUPABASE_SERVICE_KEY
 );
 
 // S3 setup
 const s3 = new AWS.S3({
-    region: process.env.AWS_REGION || 'ap-southeast-1',
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
+        region: process.env.AWS_REGION || 'ap-southeast-1',
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
 });
 
 // Set up multer for file uploads
-const upload = multer({ 
-    dest: 'uploads/',
-    limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+const upload = multer({
+        dest: 'uploads/',
+        limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
 });
 
 // OCR service URL
 const OCR_SERVICE_URL = process.env.OCR_SERVICE_URL || 'http://localhost:8000';
+
+// Health check endpoint
+app.get('/health', async (req, res) => {
+        try {
+                // Check OCR service health
+                const ocrHealth = await axios.get(`${OCR_SERVICE_URL}/health`).catch(() => ({ data: { status: 'unhealthy' } }));
+
+                res.json({
+                        status: 'API is running',
+                        ocr_service: ocrHealth.data.status,
+                        timestamp: new Date().toISOString()
+                });
+        } catch (error) {
+                res.json({
+                        status: 'API is running',
+                        ocr_service: 'unknown',
+                        timestamp: new Date().toISOString()
+                });
+        }
+});
 
 // Health check endpoint
 app.get('/health', async (req, res) => {
@@ -225,7 +250,7 @@ app.post('/upload', upload.single('receiptImage'), async (req, res) => {
                     enhance_quality: true
                 },
                 {
-                    timeout: 30000, // 30 second timeout
+                    timeout: 60000, // 30 second timeout
                     headers: {
                         'Content-Type': 'application/json'
                     }
@@ -441,7 +466,7 @@ app.post('/receipts/:id/reprocess', async (req, res) => {
                     enhance_quality: true
                 },
                 {
-                    timeout: 30000
+                    timeout: 60000
                 }
             );
             
