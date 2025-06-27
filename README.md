@@ -305,7 +305,7 @@ cd receiptiq
 cd receipt-frontend
 npm install
 cp .env.example .env.local
-# Edit .env.local with Supabase credentials
+# Edit .env.local with your Supabase credentials
 npm start  # Runs on http://localhost:3000
 
 # 3. Backend setup (new terminal)
@@ -378,5 +378,3 @@ receiptiq/
 ---
 
 **Technical Demonstration Project** | Built with React, Node.js, Python, AWS, and Supabase
-
-*Showcasing full-stack development capabilities with modern web technologies, cloud infrastructure, and AI/ML integration*
