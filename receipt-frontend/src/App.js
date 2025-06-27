@@ -34,7 +34,7 @@ function AppContent() {
             <Route path="*" element={
                 <div className="not-found">
                     <h1>404 - Page Not Found</h1>
-                    <p>The page you're looking for doesn't exist.</p>
+                    <p>The page does not exist.</p>
                     <button onClick={() => window.location.href = '/dashboard'}>
                         Go to Dashboard
                     </button>

@@ -22,13 +22,11 @@ export const AuthProvider = ({ children }) => {
 
          getInitialSession();
 
-
-        // Listen for auth state changes (login, logout)
+        // Listen for auth state changes
         const { data: { subscription } } = supabase.auth.onAuthStateChange(
             (_event, session) => {
                 setSession(session);
                 setUser(session?.user ?? null);
-                // No need to set loading false here again unless needed for specific events
             }
         );
 
@@ -43,7 +41,7 @@ export const AuthProvider = ({ children }) => {
         signIn: (data) => supabase.auth.signInWithPassword(data),
         signOut: () => supabase.auth.signOut(),
         user,
-        session, // Expose session to get JWT easily
+        session,
         loading,
     };
 

@@ -174,8 +174,6 @@ function Dashboard() {
         setFile(e.target.files[0]);
     };
 
-    // Add this debug version to your Dashboard.js handleUpload function
-
     const handleUpload = async (e) => {
         e.preventDefault();
         if (!file) return;

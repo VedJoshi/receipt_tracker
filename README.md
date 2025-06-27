@@ -69,7 +69,7 @@ ReceiptIQ is a full-stack web application that digitizes and organizes receipts 
 2. **Upload Receipt** - Try with clear, high-quality receipt images
 3. **Review Extraction** - See OCR results and confidence scores
 4. **Manual Editing** - Correct any extraction errors
-5. **Organization** - Categorize and search your receipts
+5. **Organization** - Categorize and search receipts
 
 *Note: For best results, use well-lit, uncrumpled receipts from major retailers*
 
@@ -305,7 +305,7 @@ cd receiptiq
 cd receipt-frontend
 npm install
 cp .env.example .env.local
-# Edit .env.local with your Supabase credentials
+# Edit .env.local with Supabase credentials
 npm start  # Runs on http://localhost:3000
 
 # 3. Backend setup (new terminal)

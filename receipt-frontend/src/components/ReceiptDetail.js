@@ -164,10 +164,9 @@ function ReceiptDetail() {
                 }
             });
             
-            // Show success message briefly before navigating
             setShowDeleteConfirm(false);
             
-            // Navigate back to dashboard immediately after successful deletion
+            // Navigate back to dashboard after successful deletion
             navigate('/dashboard', { 
                 state: { 
                     message: 'Receipt deleted successfully',

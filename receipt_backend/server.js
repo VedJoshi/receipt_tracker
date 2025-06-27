@@ -30,7 +30,6 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 // Add request logging middleware
 app.use((req, res, next) => {
     console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
-    console.log('Headers:', req.headers);
     next();
 });
 
@@ -55,26 +54,6 @@ const upload = multer({
 
 // OCR service URL
 const OCR_SERVICE_URL = process.env.OCR_SERVICE_URL || 'http://localhost:8000';
-
-// Health check endpoint
-app.get('/health', async (req, res) => {
-        try {
-                // Check OCR service health
-                const ocrHealth = await axios.get(`${OCR_SERVICE_URL}/health`).catch(() => ({ data: { status: 'unhealthy' } }));
-
-                res.json({
-                        status: 'API is running',
-                        ocr_service: ocrHealth.data.status,
-                        timestamp: new Date().toISOString()
-                });
-        } catch (error) {
-                res.json({
-                        status: 'API is running',
-                        ocr_service: 'unknown',
-                        timestamp: new Date().toISOString()
-                });
-        }
-});
 
 // Health check endpoint
 app.get('/health', async (req, res) => {
@@ -119,7 +98,7 @@ app.get('/receipts', async (req, res) => {
             .from('receipts')
             .select('*')
             .eq('user_id', userId)
-            .neq('is_deleted', true)  // This is more explicit than the OR condition
+            .neq('is_deleted', true)
             .order('created_at', { ascending: false });
 
         if (error) {
@@ -139,7 +118,7 @@ app.get('/receipts', async (req, res) => {
                     presignedUrl = s3.getSignedUrl('getObject', {
                         Bucket: bucket,
                         Key: key,
-                        Expires: 3600 // URL expires in 1 hour
+                        Expires: 3600
                     });
                 } catch (err) {
                     console.error('Error generating presigned URL:', err);
@@ -250,7 +229,7 @@ app.post('/upload', upload.single('receiptImage'), async (req, res) => {
                     enhance_quality: true
                 },
                 {
-                    timeout: 60000, // 30 second timeout
+                    timeout: 60000,
                     headers: {
                         'Content-Type': 'application/json'
                     }
@@ -297,8 +276,7 @@ app.post('/upload', upload.single('receiptImage'), async (req, res) => {
             receiptData.processing_status = 'failed';
             receiptData.extracted_text = `OCR service error: ${ocrError.message}`;
             
-            // Don't fail the entire upload if OCR fails
-            // User can manually edit the receipt
+            // Continue processing even if OCR fails
         }
         
         // Store receipt in database
@@ -606,7 +584,7 @@ app.get('/receipts/:id', async (req, res) => {
             .select('*')
             .eq('id', receiptId)
             .eq('user_id', userId)
-            .neq('is_deleted', true)  // Exclude soft-deleted receipts
+            .neq('is_deleted', true)
             .single();
 
         if (error || !data) {
@@ -641,7 +619,7 @@ app.get('/receipts/:id', async (req, res) => {
     }
 });
 
-// Fixed Delete receipt endpoint
+// Delete receipt endpoint
 app.delete('/receipts/:id', async (req, res) => {
     try {
         const receiptId = req.params.id;
@@ -703,7 +681,7 @@ app.delete('/receipts/:id', async (req, res) => {
     }
 });
 
-// Fixed Bulk delete receipts endpoint
+// Bulk delete receipts endpoint
 app.post('/receipts/bulk-delete', async (req, res) => {
     try {
         const { receiptIds } = req.body;
@@ -727,7 +705,7 @@ app.post('/receipts/bulk-delete', async (req, res) => {
         const userId = userData.user.id;
         
         // Soft delete multiple receipts
-        const { data, error, count } = await supabase
+        const { data, error } = await supabase
             .from('receipts')
             .update({
                 is_deleted: true,
@@ -754,68 +732,6 @@ app.post('/receipts/bulk-delete', async (req, res) => {
             message: 'Failed to delete receipts', 
             error: error.message 
         });
-    }
-});
-
-app.get('/receipts', async (req, res) => {
-    try {
-        // Verify JWT token
-        const authHeader = req.headers.authorization;
-        if (!authHeader || !authHeader.startsWith('Bearer ')) {
-            return res.status(401).json({ message: 'Unauthorized' });
-        }
-
-        const token = authHeader.split(' ')[1];
-        const { data: userData, error: userError } = await supabase.auth.getUser(token);
-        
-        if (userError || !userData.user) {
-            return res.status(401).json({ message: 'Invalid token' });
-        }
-        
-        const userId = userData.user.id;
-        
-        // Get receipts from Supabase, excluding deleted ones
-        const { data, error } = await supabase
-            .from('receipts')
-            .select('*')
-            .eq('user_id', userId)
-            .neq('is_deleted', true)  // This is more explicit than the OR condition
-            .order('created_at', { ascending: false });
-
-        if (error) {
-            throw error;
-        }
-
-        // Generate presigned URLs for all receipt images
-        const receiptsWithUrls = await Promise.all(data.map(async (receipt) => {
-            let presignedUrl = null;
-            
-            if (receipt.image_url && receipt.image_url.startsWith('s3://')) {
-                const parts = receipt.image_url.replace('s3://', '').split('/');
-                const bucket = parts[0];
-                const key = parts.slice(1).join('/');
-                
-                try {
-                    presignedUrl = s3.getSignedUrl('getObject', {
-                        Bucket: bucket,
-                        Key: key,
-                        Expires: 3600 // URL expires in 1 hour
-                    });
-                } catch (err) {
-                    console.error('Error generating presigned URL:', err);
-                }
-            }
-            
-            return {
-                ...receipt,
-                presigned_url: presignedUrl
-            };
-        }));
-
-        res.json(receiptsWithUrls);
-    } catch (error) {
-        console.error('Error fetching receipts:', error);
-        res.status(500).json({ message: 'Failed to fetch receipts', error: error.message });
     }
 });
 
