@@ -13,7 +13,7 @@ export const AuthProvider = ({ children }) => {
         const getInitialSession = async () => {
             const { data: { session: initialSession }, error } = await supabase.auth.getSession();
              if (error) {
-                 console.error("Error getting initial session:", error);
+                 // Silently handle error
              }
              setSession(initialSession);
              setUser(initialSession?.user ?? null);
@@ -26,7 +26,6 @@ export const AuthProvider = ({ children }) => {
         // Listen for auth state changes (login, logout)
         const { data: { subscription } } = supabase.auth.onAuthStateChange(
             (_event, session) => {
-                console.log("Auth state changed:", _event, session);
                 setSession(session);
                 setUser(session?.user ?? null);
                 // No need to set loading false here again unless needed for specific events

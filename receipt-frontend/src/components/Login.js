@@ -22,7 +22,6 @@ function Login() {
             navigate('/dashboard');
         } catch (err) {
             setError(err.message || 'Failed to log in');
-            console.error("Login error:", err);
         } finally {
             setLoading(false);
         }

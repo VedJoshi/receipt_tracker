@@ -45,7 +45,6 @@ function Signup() {
             }
         } catch (err) {
             setError(err.message || 'Failed to create account');
-            console.error("Signup error:", err);
         } finally {
             setLoading(false);
         }

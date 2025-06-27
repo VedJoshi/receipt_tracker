@@ -140,7 +140,6 @@ function ReceiptDetail() {
             setEditedReceipt(response.data.receipt);
             setHasChanges(false);
         } catch (err) {
-            console.error('Error saving receipt:', err);
             setError('Failed to save changes');
         } finally {
             setSaving(false);
@@ -158,16 +157,12 @@ function ReceiptDetail() {
         try {
             setError('');
             
-            console.log(`Deleting receipt ${id}`);
-            
             const response = await axios.delete(`${API_URL}/receipts/${id}`, {
                 headers: { 
                     'Authorization': `Bearer ${session.access_token}`,
                     'Content-Type': 'application/json'
                 }
             });
-            
-            console.log('Delete response:', response.data);
             
             // Show success message briefly before navigating
             setShowDeleteConfirm(false);
@@ -181,7 +176,6 @@ function ReceiptDetail() {
             });
             
         } catch (err) {
-            console.error('Error deleting receipt:', err);
             setError(`Failed to delete receipt: ${err.response?.data?.message || err.message}`);
             setShowDeleteConfirm(false);
         }

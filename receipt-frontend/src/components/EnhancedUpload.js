@@ -151,7 +151,6 @@ const EnhancedUpload = ({ onUploadComplete, onUploadError }) => {
                     }, 1500);
 
                 } catch (err) {
-                    console.error('Upload error:', err);
                     const errorMessage = err.response?.data?.message || 'Upload failed';
                     setError(errorMessage);
                     setUploading(false);

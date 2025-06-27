@@ -61,9 +61,6 @@ function Dashboard() {
     // Handle navigation state messages
     useEffect(() => {
         if (location.state?.message) {
-            // You could show a toast notification here
-            console.log(location.state.message);
-            
             // Clear the state after showing the message
             navigate(location.pathname, { replace: true });
         }
@@ -84,7 +81,6 @@ function Dashboard() {
             });
             setReceipts(response.data);
         } catch (err) {
-            console.error('Error fetching receipts:', err);
             setError('Failed to fetch receipts');
             if (err.response?.status === 401) {
                 signOut();
@@ -102,7 +98,7 @@ function Dashboard() {
             });
             setCategories(response.data);
         } catch (err) {
-            console.error('Error fetching categories:', err);
+            // Silently fail for categories
         }
     };
 
@@ -181,24 +177,16 @@ function Dashboard() {
     // Add this debug version to your Dashboard.js handleUpload function
 
     const handleUpload = async (e) => {
-        console.log('API_URL:', process.env.REACT_APP_API_GATEWAY_URL);
-        console.log('Full upload URL:', `${API_URL}/upload`);
         e.preventDefault();
         if (!file) return;
 
         setError('');
         setUploading(true);
 
-        console.log('=== MULTIPART UPLOAD DEBUG ===');
-        console.log('File size:', file.size);
-        console.log('File type:', file.type);
-
         try {
             // Use FormData for multipart upload instead of base64
             const formData = new FormData();
             formData.append('receiptImage', file);
-
-            console.log('Sending multipart upload...');
             
             const response = await axios.post(
                 `${API_URL}/upload`,
@@ -208,15 +196,10 @@ function Dashboard() {
                         'Content-Type': 'multipart/form-data',
                         'Authorization': `Bearer ${session.access_token}`
                     },
-                    timeout: 60000,
-                    onUploadProgress: (progressEvent) => {
-                        const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-                        console.log('Upload progress:', progress + '%');
-                    }
+                    timeout: 60000
                 }
             );
             
-            console.log('Upload successful!', response.status);
             setFile(null);
             document.getElementById('receipt-upload-input').value = '';
             
@@ -227,11 +210,6 @@ function Dashboard() {
             fetchReceipts();
             
         } catch (err) {
-            console.error('=== MULTIPART UPLOAD ERROR ===');
-            console.error('Error:', err.message);
-            console.error('Status:', err.response?.status);
-            console.error('Response:', err.response?.data);
-            
             setError(err.response?.data?.message || `Upload failed: ${err.message}`);
         } finally {
             setUploading(false);
@@ -261,7 +239,6 @@ function Dashboard() {
                 r.id === receiptId ? { ...r, category } : r
             ));
         } catch (err) {
-            console.error('Error updating category:', err);
             setError('Failed to update category');
         }
     };
@@ -297,8 +274,6 @@ function Dashboard() {
                 }
             );
             
-            console.log('Bulk delete response:', response.data);
-            
             setSelectedReceipts([]);
             setShowDeleteConfirm(false);
             
@@ -306,7 +281,6 @@ function Dashboard() {
             await fetchReceipts();
             
         } catch (err) {
-            console.error('Error bulk deleting receipts:', err);
             setError(`Failed to delete receipts: ${err.response?.data?.message || err.message}`);
             setShowDeleteConfirm(false);
         }
@@ -332,7 +306,6 @@ function Dashboard() {
             setSelectedReceipts([]);
             fetchReceipts();
         } catch (err) {
-            console.error('Error categorizing receipts:', err);
             setError('Failed to categorize some receipts');
         }
     };
